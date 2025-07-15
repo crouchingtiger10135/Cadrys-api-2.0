@@ -26,28 +26,20 @@
   </table>
 
   <script>
-    async function fetchProducts() {
-      try {
-        const response = await fetch('/products');
-        const products = await response.json();
-        const tbody = document.getElementById('productsBody');
-        tbody.innerHTML = '';
-        products.forEach(product => {
-          const row = document.createElement('tr');
-          row.innerHTML = `
-            <td>${product.stockCode}</td>
-            <td>${product.description}</td>
-            <td>${product.price}</td>
-            <td>${product.stockLevel}</td>
-          `;
-          tbody.appendChild(row);
-        });
-      } catch (error) {
-        console.error('Error fetching products:', error);
+   async function fetchExoProducts() {
+  try {
+    const response = await axios.get(`${exoBaseUrl}/stockitem?search=*`, {
+      auth: exoAuth, // Keeps the basic auth
+      headers: {
+        'x-myobapi-key': process.env.EXO_DEV_KEY,
+        'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
       }
-    }
-    // Load on page load
-    fetchProducts();
+    });
+    return response.data; // Assuming array of products
+  } catch (error) {
+    throw new Error(`Exo fetch error: ${error.message}`);
+  }
+}
   </script>
 </body>
 </html>
