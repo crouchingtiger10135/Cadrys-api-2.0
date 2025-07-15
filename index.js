@@ -22,7 +22,13 @@ const exoAuth = {
 // Function to fetch from Exo
 async function fetchExoProducts() {
   try {
-    const response = await axios.get(`${exoBaseUrl}/stockitem?search=*`, { auth: exoAuth });
+    const response = await axios.get(`${exoBaseUrl}/stockitem?search=*`, {
+      auth: exoAuth, // Keeps the basic auth
+      headers: {
+        'x-myobapi-key': process.env.EXO_DEV_KEY,
+        'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
+      }
+    });
     return response.data; // Assuming array of products
   } catch (error) {
     throw new Error(`Exo fetch error: ${error.message}`);
