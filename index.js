@@ -23,14 +23,14 @@ const exoHeaders = {
   'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
 };
 
-// Function to fetch brief products list with pagination
+// Function to fetch all brief products list with pagination
 async function fetchExoProductsList() {
   let allProducts = [];
   let page = 1;
   const pageSize = 100; // Max allowed is 100
   while (true) {
     try {
-      const response = await axios.get(`${exoBaseUrl}/stockitem/search?q=*&page=${page}&pagesize=${pageSize}`, {
+      const response = await axios.get(`${exoBaseUrl}/stockitem?page=${page}&pagesize=${pageSize}`, {
         auth: exoAuth,
         headers: exoHeaders
       });
