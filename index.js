@@ -23,20 +23,30 @@ const exoHeaders = {
   'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
 };
 
-// Function to fetch brief products list
+// Function to fetch all brief products list with pagination
 async function fetchExoProductsList() {
-  try {
-    const response = await axios.get(`${exoBaseUrl}/stockitem/search?q=*`, {
-      auth: exoAuth,
-      headers: exoHeaders
-    });
-    return response.data; // Array of brief products with 'id'
-  } catch (error) {
-    throw new Error(`Exo list fetch error: ${error.message}`);
+  let allProducts = [];
+  let page = 1;
+  const pageSize = 100; // Max allowed is 100
+  while (true) {
+    try {
+      const response = await axios.get(`${exoBaseUrl}/stockitem/search?q=*&page=${page}&pagesize=${pageSize}`, {
+        auth: exoAuth,
+        headers: exoHeaders
+      });
+      const products = response.data;
+      if (products.length === 0) break; // No more pages
+      allProducts = allProducts.concat(products);
+      console.log(`Fetched page ${page} with ${products.length} products`);
+      page++;
+    } catch (error) {
+      throw new Error(`Exo list fetch error on page ${page}: ${error.message}`);
+    }
   }
+  return allProducts;
 }
 
-// Function to fetch detailed product by id (stockcode)
+// Function to fetch detailed product by id
 async function fetchExoProductDetails(id) {
   try {
     const response = await axios.get(`${exoBaseUrl}/stockitem/${id}`, {
@@ -53,7 +63,7 @@ async function fetchExoProductDetails(id) {
 async function syncProducts() {
   try {
     const exoProductsList = await fetchExoProductsList();
-    console.log('Fetched products list:', exoProductsList);
+    console.log(`Total fetched products: ${exoProductsList.length}`, exoProductsList);
 
     for (const briefProduct of exoProductsList) {
       const details = await fetchExoProductDetails(briefProduct.id);
