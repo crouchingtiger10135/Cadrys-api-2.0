@@ -23,7 +23,7 @@ const exoHeaders = {
   'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
 };
 
-// Function to fetch all brief products list with pagination
+// Function to fetch brief products list with pagination
 async function fetchExoProductsList() {
   let allProducts = [];
   let page = 1;
