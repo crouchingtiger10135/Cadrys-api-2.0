@@ -26,26 +26,26 @@ const exoHeaders = {
 // Function to fetch brief products list
 async function fetchExoProductsList() {
   try {
-    const response = await axios.get(`${exoBaseUrl}/stockitem?search=*`, {
+    const response = await axios.get(`${exoBaseUrl}/stockitem/search?q=*`, {
       auth: exoAuth,
       headers: exoHeaders
     });
-    return response.data; // Array of brief products
+    return response.data; // Array of brief products with 'id'
   } catch (error) {
     throw new Error(`Exo list fetch error: ${error.message}`);
   }
 }
 
-// Function to fetch detailed product by stockcode
-async function fetchExoProductDetails(stockcode) {
+// Function to fetch detailed product by id (stockcode)
+async function fetchExoProductDetails(id) {
   try {
-    const response = await axios.get(`${exoBaseUrl}/stockitem/${stockcode}`, {
+    const response = await axios.get(`${exoBaseUrl}/stockitem/${id}`, {
       auth: exoAuth,
       headers: exoHeaders
     });
     return response.data; // Detailed product object
   } catch (error) {
-    throw new Error(`Exo details fetch error for ${stockcode}: ${error.message}`);
+    throw new Error(`Exo details fetch error for ${id}: ${error.message}`);
   }
 }
 
@@ -56,11 +56,11 @@ async function syncProducts() {
     console.log('Fetched products list:', exoProductsList);
 
     for (const briefProduct of exoProductsList) {
-      const details = await fetchExoProductDetails(briefProduct.stockcode);
-      console.log(`Fetched details for ${briefProduct.stockcode}:`, details);
+      const details = await fetchExoProductDetails(briefProduct.id);
+      console.log(`Fetched details for ${briefProduct.id}:`, details);
 
       await prisma.product.upsert({
-        where: { stockCode: briefProduct.stockcode },
+        where: { stockCode: details.id },
         update: {
           description: details.description || 'Untitled',
           price: details.saleprices?.[0]?.price || details.latestcost || 0,
@@ -68,14 +68,14 @@ async function syncProducts() {
           // Add more fields as needed
         },
         create: {
-          stockCode: briefProduct.stockcode,
+          stockCode: details.id,
           description: details.description || 'Untitled',
           price: details.saleprices?.[0]?.price || details.latestcost || 0,
           stockLevel: details.totalinstock || 0,
           // Add more fields as needed
         },
       });
-      console.log(`Synced product: ${briefProduct.stockcode}`);
+      console.log(`Synced product: ${details.id}`);
     }
     console.log('Sync complete');
   } catch (error) {
