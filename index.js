@@ -23,8 +23,6 @@ const exoHeaders = {
   'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
 };
 
-let isSyncing = false; // Lock to prevent concurrent syncs
-
 // Function to fetch all brief products list with pagination
 async function fetchExoProductsList() {
   let allProducts = [];
@@ -63,31 +61,43 @@ async function fetchExoProductDetails(id) {
 
 // Function to sync products to DB
 async function syncProducts() {
-  if (isSyncing) {
-    console.log('Sync already in progress, skipping');
-    return;
-  }
-  isSyncing = true;
   try {
     const exoProductsList = await fetchExoProductsList();
-    console.log(`Total fetched products: ${exoProductsList.length}`, exoProductsList);
+    console.log(`Total fetched products: ${exoProductsList.length}`);
 
     for (const briefProduct of exoProductsList) {
       const details = await fetchExoProductDetails(briefProduct.id);
       console.log(`Fetched details for ${briefProduct.id}:`, details);
 
+      const extrafields = details.extrafields || [];
+      const origin = extrafields.find(f => f.name === 'Origin')?.value || null;
+      const length = parseFloat(extrafields.find(f => f.name === 'Length')?.value) || null;
+      const width = parseFloat(extrafields.find(f => f.name === 'Width')?.value) || null;
+      const size = (length && width) ? `${length} x ${width}` : null;
+      const sku = details.barcode1 || details.id; // Use barcode1 as SKU or fallback to id
+
       await prisma.product.upsert({
         where: { stockCode: details.id },
         update: {
-          description: details.description || 'Untitled',
+          name: details.description || 'Untitled',
+          sku,
           price: details.saleprices?.[0]?.price || details.latestcost || 0,
+          origin,
+          length,
+          width,
+          size,
           stockLevel: details.totalinstock || 0,
           // Add more fields as needed
         },
         create: {
           stockCode: details.id,
-          description: details.description || 'Untitled',
+          name: details.description || 'Untitled',
+          sku,
           price: details.saleprices?.[0]?.price || details.latestcost || 0,
+          origin,
+          length,
+          width,
+          size,
           stockLevel: details.totalinstock || 0,
           // Add more fields as needed
         },
@@ -97,15 +107,13 @@ async function syncProducts() {
     console.log('Sync complete');
   } catch (error) {
     console.error('Sync error:', error);
-  } finally {
-    isSyncing = false;
   }
 }
 
 // API endpoint to trigger sync manually
 app.get('/sync', async (req, res) => {
-  syncProducts(); // Call without await to return response immediately
-  res.send('Product sync triggered (running in background)');
+  await syncProducts();
+  res.send('Product sync triggered');
 });
 
 // API endpoint to get all products
