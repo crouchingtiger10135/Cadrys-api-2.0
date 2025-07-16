@@ -4,30 +4,32 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Exo Inventory Viewer</title>
-  <style>
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-    th { background-color: #f2f2f2; }
-    button { margin-right: 10px; }
-    #status { color: green; margin-top: 10px; }
-  </style>
+  <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-  <h1>Exo Products List</h1>
-  <button onclick="syncAndRefresh()">Sync Now</button>
-  <button onclick="fetchProducts()">Refresh List</button>
-  <div id="status"></div>
-  <table id="productsTable">
-    <thead>
-      <tr>
-        <th>Stock Code</th>
-        <th>Description</th>
-        <th>Price</th>
-        <th>Stock Level</th>
-      </tr>
-    </thead>
-    <tbody id="productsBody"></tbody>
-  </table>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-4">
+  <div class="w-full max-w-6xl bg-white shadow-lg rounded-lg overflow-hidden">
+    <header class="bg-blue-600 text-white p-4">
+      <h1 class="text-2xl font-bold">Exo Products List</h1>
+    </header>
+    <div class="p-4 flex space-x-4">
+      <button onclick="syncAndRefresh()" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition">Sync Now</button>
+      <button onclick="fetchProducts()" class="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 transition">Refresh List</button>
+    </div>
+    <div id="status" class="p-4 text-green-600"></div>
+    <div class="overflow-x-auto">
+      <table class="w-full border-collapse">
+        <thead class="bg-gray-200">
+          <tr>
+            <th class="p-3 text-left border-b">Stock Code</th>
+            <th class="p-3 text-left border-b">Description</th>
+            <th class="p-3 text-left border-b">Price</th>
+            <th class="p-3 text-left border-b">Stock Level</th>
+          </tr>
+        </thead>
+        <tbody id="productsBody" class="divide-y divide-gray-200"></tbody>
+      </table>
+    </div>
+  </div>
 
   <script>
     async function fetchProducts() {
@@ -38,34 +40,35 @@
         tbody.innerHTML = '';
         products.forEach(product => {
           const row = document.createElement('tr');
+          row.classList.add('hover:bg-gray-50');
           row.innerHTML = `
-            <td>${product.stockCode}</td>
-            <td>${product.description}</td>
-            <td>${product.price}</td>
-            <td>${product.stockLevel}</td>
+            <td class="p-3">${product.stockCode}</td>
+            <td class="p-3">${product.description}</td>
+            <td class="p-3">${product.price}</td>
+            <td class="p-3">${product.stockLevel}</td>
           `;
           tbody.appendChild(row);
         });
       } catch (error) {
         console.error('Error fetching products:', error);
         document.getElementById('status').textContent = 'Error loading products.';
-        document.getElementById('status').style.color = 'red';
+        document.getElementById('status').classList.add('text-red-600');
       }
     }
 
     async function syncAndRefresh() {
       const statusEl = document.getElementById('status');
       statusEl.textContent = 'Syncing...';
-      statusEl.style.color = 'blue';
+      statusEl.classList.add('text-blue-600');
       try {
         await fetch('/sync');
         statusEl.textContent = 'Sync complete! Refreshing list...';
-        statusEl.style.color = 'green';
+        statusEl.classList.add('text-green-600');
         await fetchProducts();
       } catch (error) {
         console.error('Error during sync:', error);
         statusEl.textContent = 'Sync failed.';
-        statusEl.style.color = 'red';
+        statusEl.classList.add('text-red-600');
       }
     }
 
