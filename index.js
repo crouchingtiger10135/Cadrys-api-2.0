@@ -6,7 +6,7 @@ const { PrismaClient } = require('@prisma/client');
 const path = require('path');
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3000; // Railway will set PORT; fallback only for local
 const prisma = new PrismaClient();
 
 app.use(express.json());
@@ -39,6 +39,7 @@ async function fetchExoProducts() {
 async function syncProducts() {
   try {
     const exoProducts = await fetchExoProducts();
+    console.log('Fetched products list:', exoProducts); // Log the full list of fetched products
 
     for (const exoProduct of exoProducts) {
       await prisma.product.upsert({
@@ -89,4 +90,14 @@ app.get('/', (req, res) => {
 // Schedule sync every hour
 cron.schedule('0 * * * *', syncProducts);
 
-app.listen(port, () => console.log(`App listening on port ${port}`));
+// Graceful shutdown handlers
+const shutdown = async () => {
+  console.log('Shutting down gracefully...');
+  await prisma.$disconnect(); // Close Prisma connections
+  process.exit(0); // Exit cleanly
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+app.listen(port, '0.0.0.0', () => console.log(`App listening on port ${port}`));
