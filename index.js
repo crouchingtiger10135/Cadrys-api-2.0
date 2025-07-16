@@ -18,47 +18,64 @@ const exoAuth = {
   username: process.env.EXO_USERNAME,
   password: process.env.EXO_PASSWORD
 };
+const exoHeaders = {
+  'x-myobapi-key': process.env.EXO_DEV_KEY,
+  'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
+};
 
-// Function to fetch from Exo
-async function fetchExoProducts() {
+// Function to fetch brief products list
+async function fetchExoProductsList() {
   try {
-    const response = await axios.get(`${exoBaseUrl}/stockitem/search?q=*`, {
-      auth: exoAuth, // Keeps the basic auth
-      headers: {
-        'x-myobapi-key': process.env.EXO_DEV_KEY,
-        'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
-      }
+    const response = await axios.get(`${exoBaseUrl}/stockitem?search=*`, {
+      auth: exoAuth,
+      headers: exoHeaders
     });
-    return response.data; // Assuming array of products
+    return response.data; // Array of brief products
   } catch (error) {
-    throw new Error(`Exo fetch error: ${error.message}`);
+    throw new Error(`Exo list fetch error: ${error.message}`);
+  }
+}
+
+// Function to fetch detailed product by stockcode
+async function fetchExoProductDetails(stockcode) {
+  try {
+    const response = await axios.get(`${exoBaseUrl}/stockitem/${stockcode}`, {
+      auth: exoAuth,
+      headers: exoHeaders
+    });
+    return response.data; // Detailed product object
+  } catch (error) {
+    throw new Error(`Exo details fetch error for ${stockcode}: ${error.message}`);
   }
 }
 
 // Function to sync products to DB
 async function syncProducts() {
   try {
-    const exoProducts = await fetchExoProducts();
-    console.log('Fetched products list:', exoProducts); // Log the full list of fetched products
+    const exoProductsList = await fetchExoProductsList();
+    console.log('Fetched products list:', exoProductsList);
 
-    for (const exoProduct of exoProducts) {
+    for (const briefProduct of exoProductsList) {
+      const details = await fetchExoProductDetails(briefProduct.stockcode);
+      console.log(`Fetched details for ${briefProduct.stockcode}:`, details);
+
       await prisma.product.upsert({
-        where: { stockCode: exoProduct.STOCKCODE },
+        where: { stockCode: briefProduct.stockcode },
         update: {
-          description: exoProduct.DESCRIPTION || 'Untitled',
-          price: exoProduct.SELLPRICE1 || 0,
-          stockLevel: exoProduct.STOCKLEVEL || 0,
+          description: details.description || 'Untitled',
+          price: details.saleprices?.[0]?.price || details.latestcost || 0,
+          stockLevel: details.totalinstock || 0,
           // Add more fields as needed
         },
         create: {
-          stockCode: exoProduct.STOCKCODE,
-          description: exoProduct.DESCRIPTION || 'Untitled',
-          price: exoProduct.SELLPRICE1 || 0,
-          stockLevel: exoProduct.STOCKLEVEL || 0,
+          stockCode: briefProduct.stockcode,
+          description: details.description || 'Untitled',
+          price: details.saleprices?.[0]?.price || details.latestcost || 0,
+          stockLevel: details.totalinstock || 0,
           // Add more fields as needed
         },
       });
-      console.log(`Synced product: ${exoProduct.STOCKCODE}`);
+      console.log(`Synced product: ${briefProduct.stockcode}`);
     }
     console.log('Sync complete');
   } catch (error) {
