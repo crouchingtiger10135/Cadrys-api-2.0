@@ -23,6 +23,8 @@ const exoHeaders = {
   'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
 };
 
+let isSyncing = false; // Lock to prevent concurrent syncs
+
 // Function to fetch all brief products list with pagination
 async function fetchExoProductsList() {
   let allProducts = [];
@@ -61,6 +63,11 @@ async function fetchExoProductDetails(id) {
 
 // Function to sync products to DB
 async function syncProducts() {
+  if (isSyncing) {
+    console.log('Sync already in progress, skipping');
+    return;
+  }
+  isSyncing = true;
   try {
     const exoProductsList = await fetchExoProductsList();
     console.log(`Total fetched products: ${exoProductsList.length}`, exoProductsList);
@@ -90,13 +97,15 @@ async function syncProducts() {
     console.log('Sync complete');
   } catch (error) {
     console.error('Sync error:', error);
+  } finally {
+    isSyncing = false;
   }
 }
 
 // API endpoint to trigger sync manually
 app.get('/sync', async (req, res) => {
-  await syncProducts();
-  res.send('Product sync triggered');
+  syncProducts(); // Call without await to return response immediately
+  res.send('Product sync triggered (running in background)');
 });
 
 // API endpoint to get all products
