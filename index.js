@@ -22,7 +22,7 @@ const exoAuth = {
 // Function to fetch from Exo
 async function fetchExoProducts() {
   try {
-    const response = await axios.get(`${exoBaseUrl}/stockitem?search=*`, {
+    const response = await axios.get(`${exoBaseUrl}/stockitem/search?q=*`, {
       auth: exoAuth, // Keeps the basic auth
       headers: {
         'x-myobapi-key': process.env.EXO_DEV_KEY,
