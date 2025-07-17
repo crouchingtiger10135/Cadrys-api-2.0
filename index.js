@@ -23,17 +23,17 @@ const exoHeaders = {
   'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
 };
 
-// Function to fetch with retries
-async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
+// Function to fetch with retries and exponential backoff
+async function fetchWithRetry(url, options, retries = 5, backoff = 2000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const response = await axios.get(url, options);
       return response.data;
     } catch (error) {
-      if (attempt === retries || error.response.status !== 504) {
+      if (attempt === retries || (error.response && error.response.status !== 504)) {
         throw error;
       }
-      console.log(`Retry ${attempt} for ${url} after 504 error...`);
+      console.log(`Retry ${attempt}/${retries} for ${url} after 504 error... Waiting ${backoff * attempt / 1000}s`);
       await new Promise(resolve => setTimeout(resolve, backoff * attempt));
     }
   }
@@ -43,7 +43,7 @@ async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
 async function fetchExoProductsList() {
   let allProducts = [];
   let page = 1;
-  const pageSize = 100; // Max allowed is 100
+  const pageSize = 50; // Reduced to 50 to lessen load per request
   while (true) {
     const url = `${exoBaseUrl}/stockitem?page=${page}&pagesize=${pageSize}`;
     const products = await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
@@ -61,51 +61,62 @@ async function fetchExoProductDetails(id) {
   return await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
 }
 
-// Function to sync products to DB
+// Function to sync products to DB with batched details
 async function syncProducts() {
   try {
     const exoProductsList = await fetchExoProductsList();
     console.log(`Total fetched products: ${exoProductsList.length}`);
 
-    for (const briefProduct of exoProductsList) {
-      const details = await fetchExoProductDetails(briefProduct.id);
-      console.log(`Fetched details for ${briefProduct.id}:`, details);
+    // Batch detail fetches in groups of 10 to avoid rate limits
+    const batchSize = 10;
+    for (let i = 0; i < exoProductsList.length; i += batchSize) {
+      const batch = exoProductsList.slice(i, i + batchSize);
+      const detailsBatch = await Promise.allSettled(batch.map(brief => fetchExoProductDetails(brief.id)));
+      for (const [index, result] of detailsBatch.entries()) {
+        if (result.status === 'fulfilled') {
+          const details = result.value;
+          const briefProduct = batch[index];
+          console.log(`Fetched details for ${briefProduct.id}:`, details);
 
-      const extrafields = details.extrafields || [];
-      const origin = extrafields.find(f => f.name.toLowerCase() === 'origin')?.value || null;
-      const length = parseFloat(extrafields.find(f => f.name.toLowerCase() === 'length')?.value) || null;
-      const width = parseFloat(extrafields.find(f => f.name.toLowerCase() === 'width')?.value) || null;
-      const size = (length && width) ? `${length} x ${width}` : null;
-      const sku = details.barcode1 || details.id; // Use barcode1 as SKU or fallback to id
-      const webdescription = extrafields.find(f => f.name.toLowerCase() === 'webdescription')?.value || details.notes || '';
+          const extrafields = details.extrafields || [];
+          const origin = extrafields.find(f => f.name.toLowerCase() === 'origin')?.value || null;
+          const length = parseFloat(extrafields.find(f => f.name.toLowerCase() === 'length')?.value) || null;
+          const width = parseFloat(extrafields.find(f => f.name.toLowerCase() === 'width')?.value) || null;
+          const size = (length && width) ? `${length} x ${width}` : null;
+          const sku = details.barcode1 || details.id; // Use barcode1 as SKU or fallback to id
+          const webdescription = extrafields.find(f => f.name.toLowerCase() === 'webdescription')?.value || details.notes || '';
 
-      await prisma.product.upsert({
-        where: { stockCode: details.id },
-        update: {
-          name: details.description || 'Untitled',
-          description: webdescription,
-          sku,
-          price: details.saleprices?.[0]?.price || details.latestcost || 0,
-          origin,
-          length,
-          width,
-          size,
-          stockLevel: details.totalinstock || 0,
-        },
-        create: {
-          stockCode: details.id,
-          name: details.description || 'Untitled',
-          description: webdescription,
-          sku,
-          price: details.saleprices?.[0]?.price || details.latestcost || 0,
-          origin,
-          length,
-          width,
-          size,
-          stockLevel: details.totalinstock || 0,
-        },
-      });
-      console.log(`Synced product: ${details.id}`);
+          await prisma.product.upsert({
+            where: { stockCode: details.id },
+            update: {
+              name: details.description || 'Untitled',
+              description: webdescription,
+              sku,
+              price: details.saleprices?.[0]?.price || details.latestcost || 0,
+              origin,
+              length,
+              width,
+              size,
+              stockLevel: details.totalinstock || 0,
+            },
+            create: {
+              stockCode: details.id,
+              name: details.description || 'Untitled',
+              description: webdescription,
+              sku,
+              price: details.saleprices?.[0]?.price || details.latestcost || 0,
+              origin,
+              length,
+              width,
+              size,
+              stockLevel: details.totalinstock || 0,
+            },
+          });
+          console.log(`Synced product: ${details.id}`);
+        } else {
+          console.error(`Failed to fetch details for batch item ${batch[index].id}:`, result.reason);
+        }
+      }
     }
     console.log('Sync complete');
   } catch (error) {
@@ -115,8 +126,8 @@ async function syncProducts() {
 
 // API endpoint to trigger sync manually
 app.get('/sync', async (req, res) => {
-  await syncProducts();
-  res.send('Product sync triggered');
+  syncProducts(); // Run in background
+  res.send('Product sync triggered (running in background)');
 });
 
 // API endpoint to get all products
