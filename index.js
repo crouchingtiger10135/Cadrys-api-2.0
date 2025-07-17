@@ -23,40 +23,42 @@ const exoHeaders = {
   'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
 };
 
+// Function to fetch with retries
+async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await axios.get(url, options);
+      return response.data;
+    } catch (error) {
+      if (attempt === retries || error.response.status !== 504) {
+        throw error;
+      }
+      console.log(`Retry ${attempt} for ${url} after 504 error...`);
+      await new Promise(resolve => setTimeout(resolve, backoff * attempt));
+    }
+  }
+}
+
 // Function to fetch all brief products list with pagination
 async function fetchExoProductsList() {
   let allProducts = [];
   let page = 1;
   const pageSize = 100; // Max allowed is 100
   while (true) {
-    try {
-      const response = await axios.get(`${exoBaseUrl}/stockitem?page=${page}&pagesize=${pageSize}`, {
-        auth: exoAuth,
-        headers: exoHeaders
-      });
-      const products = response.data;
-      if (products.length === 0) break; // No more pages
-      allProducts = allProducts.concat(products);
-      console.log(`Fetched page ${page} with ${products.length} products`);
-      page++;
-    } catch (error) {
-      throw new Error(`Exo list fetch error on page ${page}: ${error.message}`);
-    }
+    const url = `${exoBaseUrl}/stockitem?page=${page}&pagesize=${pageSize}`;
+    const products = await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
+    if (products.length === 0) break; // No more pages
+    allProducts = allProducts.concat(products);
+    console.log(`Fetched page ${page} with ${products.length} products`);
+    page++;
   }
   return allProducts;
 }
 
-// Function to fetch detailed product by id
+// Function to fetch detailed product by id with retry
 async function fetchExoProductDetails(id) {
-  try {
-    const response = await axios.get(`${exoBaseUrl}/stockitem/${id}`, {
-      auth: exoAuth,
-      headers: exoHeaders
-    });
-    return response.data; // Detailed product object
-  } catch (error) {
-    throw new Error(`Exo details fetch error for ${id}: ${error.message}`);
-  }
+  const url = `${exoBaseUrl}/stockitem/${id}`;
+  return await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
 }
 
 // Function to sync products to DB
@@ -70,16 +72,18 @@ async function syncProducts() {
       console.log(`Fetched details for ${briefProduct.id}:`, details);
 
       const extrafields = details.extrafields || [];
-      const origin = extrafields.find(f => f.name === 'Origin')?.value || null;
-      const length = parseFloat(extrafields.find(f => f.name === 'Length')?.value) || null;
-      const width = parseFloat(extrafields.find(f => f.name === 'Width')?.value) || null;
+      const origin = extrafields.find(f => f.name.toLowerCase() === 'origin')?.value || null;
+      const length = parseFloat(extrafields.find(f => f.name.toLowerCase() === 'length')?.value) || null;
+      const width = parseFloat(extrafields.find(f => f.name.toLowerCase() === 'width')?.value) || null;
       const size = (length && width) ? `${length} x ${width}` : null;
       const sku = details.barcode1 || details.id; // Use barcode1 as SKU or fallback to id
+      const webdescription = extrafields.find(f => f.name.toLowerCase() === 'webdescription')?.value || details.notes || '';
 
       await prisma.product.upsert({
         where: { stockCode: details.id },
         update: {
           name: details.description || 'Untitled',
+          description: webdescription,
           sku,
           price: details.saleprices?.[0]?.price || details.latestcost || 0,
           origin,
@@ -87,11 +91,11 @@ async function syncProducts() {
           width,
           size,
           stockLevel: details.totalinstock || 0,
-          // Add more fields as needed
         },
         create: {
           stockCode: details.id,
           name: details.description || 'Untitled',
+          description: webdescription,
           sku,
           price: details.saleprices?.[0]?.price || details.latestcost || 0,
           origin,
@@ -99,7 +103,6 @@ async function syncProducts() {
           width,
           size,
           stockLevel: details.totalinstock || 0,
-          // Add more fields as needed
         },
       });
       console.log(`Synced product: ${details.id}`);
