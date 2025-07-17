@@ -149,4 +149,4 @@ const shutdown = async () => {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-app.listen(port, '0.0.0.0', () => console.log(`App listening on port ${port}`));git add prisma/schema.prisma index.js public/index.html
+app.listen(port, '0.0.0.0', () => console.log(`App listening on port ${port}`));
