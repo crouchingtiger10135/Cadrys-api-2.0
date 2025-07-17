@@ -10,14 +10,15 @@ datasource db {
 model Product {
   id          Int      @id @default(autoincrement())
   stockCode   String   @unique
-  description String?
-  price       Decimal
+  name        String?  // Mapped from description
+  description String?  // Mapped from webdescription or notes
+  sku         String?
+  price       Decimal  // Use Decimal for money precision
+  origin      String?
+  length      Float?
+  width       Float?
+  size        String?  // Computed as `${length} x ${width}`
   stockLevel  Int
   createdAt   DateTime @default(now())
-  length      Float?
-  name        String?
-  origin      String?
-  size        String?
-  sku         String?
-  width       Float?
+  updatedAt   DateTime @updatedAt
 }
