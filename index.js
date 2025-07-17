@@ -131,9 +131,38 @@ app.get('/products', async (req, res) => {
   }
 });
 
-// Serve frontend
+// API endpoint to get single product by stockCode
+app.get('/products/:stockCode', async (req, res) => {
+  try {
+    const { stockCode } = req.params;
+    const product = await prisma.product.findUnique({
+      where: { stockCode }
+    });
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+    res.json(product);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch product' });
+  }
+});
+
+// Stub endpoint to push single product to Shopify (does nothing yet)
+app.post('/products/:stockCode/push-to-shopify', async (req, res) => {
+  const { stockCode } = req.params;
+  // TODO: Implement Shopify API call here
+  console.log(`Stub: Pushing product ${stockCode} to Shopify`);
+  res.json({ message: `Product ${stockCode} pushed to Shopify (stub)` });
+});
+
+// Serve frontend list page
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Serve frontend detail page
+app.get('/product/:stockCode', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'product.html'));
 });
 
 // Schedule sync every hour

@@ -6,71 +6,121 @@
   <title>Exo Inventory Viewer</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-4">
-  <div class="w-full max-w-6xl bg-white shadow-lg rounded-lg overflow-hidden">
-    <header class="bg-blue-600 text-white p-4">
-      <h1 class="text-2xl font-bold">Exo Products List</h1>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-start p-4 md:p-8">
+  <div class="w-full max-w-7xl bg-white shadow-xl rounded-xl overflow-hidden">
+    <header class="bg-indigo-600 text-white p-6">
+      <h1 class="text-3xl font-semibold">Exo Products Inventory</h1>
     </header>
-    <div class="p-4 flex space-x-4">
-      <button onclick="syncAndRefresh()" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition">Sync Now</button>
-      <button onclick="fetchProducts()" class="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 transition">Refresh List</button>
+    <div class="p-6 flex flex-col md:flex-row md:items-center md:space-x-4 space-y-4 md:space-y-0">
+      <button onclick="syncAndRefresh()" class="bg-indigo-600 text-white px-6 py-3 rounded-lg hover:bg-indigo-700 transition flex items-center justify-center">
+        <span>Sync Now</span>
+        <svg id="sync-spinner" class="ml-2 h-5 w-5 animate-spin hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+      </button>
+      <button onclick="fetchProducts()" class="bg-gray-600 text-white px-6 py-3 rounded-lg hover:bg-gray-700 transition">Refresh List</button>
+      <input id="searchInput" type="text" placeholder="Search by stock code or name..." class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
     </div>
-    <div id="status" class="p-4 text-green-600"></div>
+    <div id="status" class="px-6 pb-4 text-sm font-medium"></div>
     <div class="overflow-x-auto">
       <table class="w-full border-collapse">
-        <thead class="bg-gray-200">
+        <thead class="bg-gray-200 text-gray-700">
           <tr>
-            <th class="p-3 text-left border-b">Stock Code</th>
-            <th class="p-3 text-left border-b">Description</th>
-            <th class="p-3 text-left border-b">Price</th>
-            <th class="p-3 text-left border-b">Stock Level</th>
+            <th class="p-4 text-left font-semibold border-b">Stock Code</th>
+            <th class="p-4 text-left font-semibold border-b">Name</th>
+            <th class="p-4 text-left font-semibold border-b">Description</th>
+            <th class="p-4 text-left font-semibold border-b">SKU</th>
+            <th class="p-4 text-left font-semibold border-b">Price</th>
+            <th class="p-4 text-left font-semibold border-b">Origin</th>
+            <th class="p-4 text-left font-semibold border-b">Length</th>
+            <th class="p-4 text-left font-semibold border-b">Width</th>
+            <th class="p-4 text-left font-semibold border-b">Size</th>
+            <th class="p-4 text-left font-semibold border-b">Stock Level</th>
+            <th class="p-4 text-left font-semibold border-b">Actions</th>
           </tr>
         </thead>
         <tbody id="productsBody" class="divide-y divide-gray-200"></tbody>
       </table>
+      <div id="noResults" class="hidden p-6 text-center text-gray-500">No products found.</div>
     </div>
   </div>
 
   <script>
+    let allProducts = []; // Store full list for filtering
+
     async function fetchProducts() {
       try {
         const response = await fetch('/products');
         const products = await response.json();
-        const tbody = document.getElementById('productsBody');
-        tbody.innerHTML = '';
-        products.forEach(product => {
+        allProducts = products;
+        renderTable(products);
+      } catch (error) {
+        console.error('Error fetching products:', error);
+        updateStatus('Error loading products.', 'text-red-600');
+      }
+    }
+
+    function renderTable(products) {
+      const tbody = document.getElementById('productsBody');
+      tbody.innerHTML = '';
+      const noResults = document.getElementById('noResults');
+      if (products.length === 0) {
+        noResults.classList.remove('hidden');
+      } else {
+        noResults.classList.add('hidden');
+        products.forEach((product, index) => {
           const row = document.createElement('tr');
-          row.classList.add('hover:bg-gray-50');
+          row.classList.add(index % 2 === 0 ? 'bg-white' : 'bg-gray-50', 'hover:bg-indigo-50', 'transition');
           row.innerHTML = `
-            <td class="p-3">${product.stockCode}</td>
-            <td class="p-3">${product.description}</td>
-            <td class="p-3">${product.price}</td>
-            <td class="p-3">${product.stockLevel}</td>
+            <td class="p-4">${product.stockCode}</td>
+            <td class="p-4">${product.name || ''}</td>
+            <td class="p-4">${product.description || ''}</td>
+            <td class="p-4">${product.sku || ''}</td>
+            <td class="p-4">$${product.price.toFixed(2)}</td>
+            <td class="p-4">${product.origin || ''}</td>
+            <td class="p-4">${product.length ? product.length.toFixed(2) : ''}</td>
+            <td class="p-4">${product.width ? product.width.toFixed(2) : ''}</td>
+            <td class="p-4">${product.size || ''}</td>
+            <td class="p-4">${product.stockLevel}</td>
+            <td class="p-4"><a href="/product.html?stockCode=${product.stockCode}" class="text-indigo-600 hover:underline">View</a></td>
           `;
           tbody.appendChild(row);
         });
-      } catch (error) {
-        console.error('Error fetching products:', error);
-        document.getElementById('status').textContent = 'Error loading products.';
-        document.getElementById('status').classList.add('text-red-600');
       }
     }
 
     async function syncAndRefresh() {
       const statusEl = document.getElementById('status');
-      statusEl.textContent = 'Syncing...';
-      statusEl.classList.add('text-blue-600');
+      const spinner = document.getElementById('sync-spinner');
+      updateStatus('Syncing...', 'text-blue-600');
+      spinner.classList.remove('hidden');
       try {
         await fetch('/sync');
-        statusEl.textContent = 'Sync complete! Refreshing list...';
-        statusEl.classList.add('text-green-600');
+        updateStatus('Sync complete! Refreshing list...', 'text-green-600');
         await fetchProducts();
       } catch (error) {
         console.error('Error during sync:', error);
-        statusEl.textContent = 'Sync failed.';
-        statusEl.classList.add('text-red-600');
+        updateStatus('Sync failed.', 'text-red-600');
+      } finally {
+        spinner.classList.add('hidden');
       }
     }
+
+    function updateStatus(message, colorClass) {
+      const statusEl = document.getElementById('status');
+      statusEl.textContent = message;
+      statusEl.className = `px-6 pb-4 text-sm font-medium ${colorClass}`;
+    }
+
+    // Search filtering
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      const query = e.target.value.toLowerCase();
+      const filtered = allProducts.filter(p => 
+        p.stockCode.toLowerCase().includes(query) || p.name.toLowerCase().includes(query) || p.description.toLowerCase().includes(query)
+      );
+      renderTable(filtered);
+    });
 
     // Load on page load
     fetchProducts();

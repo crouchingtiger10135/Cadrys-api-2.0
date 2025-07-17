@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Product Details</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-start p-4 md:p-8">
+  <div class="w-full max-w-4xl bg-white shadow-xl rounded-xl p-6">
+    <header class="mb-6">
+      <h1 class="text-3xl font-semibold text-indigo-600">Product Details</h1>
+    </header>
+    <div id="productDetails" class="space-y-4">
+      <!-- Product details will be loaded here -->
+    </div>
+    <div id="status" class="mt-4 text-sm font-medium"></div>
+    <div class="mt-6 flex space-x-4">
+      <button onclick="pushToShopify()" class="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition">Push to Shopify</button>
+      <a href="/" class="bg-gray-600 text-white px-6 py-3 rounded-lg hover:bg-gray-700 transition">Back to List</a>
+    </div>
+  </div>
+
+  <script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const stockCode = urlParams.get('stockCode');
+
+    async function fetchProduct() {
+      try {
+        const response = await fetch(`/products/${stockCode}`);
+        const product = await response.json();
+        renderProduct(product);
+      } catch (error) {
+        console.error('Error fetching product:', error);
+        updateStatus('Error loading product details.', 'text-red-600');
+      }
+    }
+
+    function renderProduct(product) {
+      const detailsDiv = document.getElementById('productDetails');
+      detailsDiv.innerHTML = `
+        <p><strong>Stock Code:</strong> ${product.stockCode}</p>
+        <p><strong>Name:</strong> ${product.name || ''}</p>
+        <p><strong>Description:</strong> ${product.description || ''}</p>
+        <p><strong>SKU:</strong> ${product.sku || ''}</p>
+        <p><strong>Price:</strong> $${product.price.toFixed(2)}</p>
+        <p><strong>Origin:</strong> ${product.origin || ''}</p>
+        <p><strong>Length:</strong> ${product.length ? product.length.toFixed(2) : ''}</p>
+        <p><strong>Width:</strong> ${product.width ? product.width.toFixed(2) : ''}</p>
+        <p><strong>Size:</strong> ${product.size || ''}</p>
+        <p><strong>Stock Level:</strong> ${product.stockLevel}</p>
+      `;
+    }
+
+    async function pushToShopify() {
+      const statusEl = document.getElementById('status');
+      updateStatus('Pushing to Shopify...', 'text-blue-600');
+      try {
+        const response = await fetch(`/products/${stockCode}/push-to-shopify`, { method: 'POST' });
+        const data = await response.json();
+        updateStatus(data.message, 'text-green-600');
+      } catch (error) {
+        console.error('Error pushing to Shopify:', error);
+        updateStatus('Push failed.', 'text-red-600');
+      }
+    }
+
+    function updateStatus(message, colorClass) {
+      const statusEl = document.getElementById('status');
+      statusEl.textContent = message;
+      statusEl.className = `mt-4 text-sm font-medium ${colorClass}`;
+    }
+
+    // Load product on page load
+    fetchProduct();
+  </script>
+</body>
+</html>
