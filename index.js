@@ -32,10 +32,10 @@ async function fetchWithRetry(url, options, retries = 5, backoff = 2000) {
       const response = await axios.get(url, options);
       return response.data;
     } catch (error) {
+      console.error(`Attempt ${attempt} failed for ${url}:`, error.message);
       if (attempt === retries || (error.response && error.response.status !== 504)) {
         throw error;
       }
-      console.log(`Retry ${attempt}/${retries} for ${url} after 504 error... Waiting ${backoff * attempt / 1000}s`);
       await new Promise(resolve => setTimeout(resolve, backoff * attempt));
     }
   }
@@ -45,7 +45,7 @@ async function fetchWithRetry(url, options, retries = 5, backoff = 2000) {
 async function fetchExoProductsList() {
   let allProducts = [];
   let page = 1;
-  const pageSize = 50; // Reduced for stability
+  const pageSize = 100; // Max allowed is 100
   while (true) {
     const url = `${exoBaseUrl}/stockitem?page=${page}&pagesize=${pageSize}`;
     const products = await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
@@ -63,7 +63,7 @@ async function fetchExoProductDetails(id) {
   return await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
 }
 
-// Function to sync products to DB
+// Function to sync products to DB with change detection
 async function syncProducts() {
   if (isSyncing) {
     console.log('Sync already in progress, skipping');
@@ -77,6 +77,13 @@ async function syncProducts() {
     for (const briefProduct of exoProductsList) {
       const details = await fetchExoProductDetails(briefProduct.id);
       console.log(`Fetched details for ${briefProduct.id}:`, details);
+
+      const existingProduct = await prisma.product.findUnique({ where: { stockCode: details.id } });
+      const exoLastModified = new Date(details.lastmodifieddateutc);
+      if (existingProduct && existingProduct.lastModified >= exoLastModified) {
+        console.log(`Product ${details.id} not changed, skipping update`);
+        continue;
+      }
 
       const extrafields = details.extrafields || [];
       const origin = extrafields.find(f => f.name === 'Origin')?.value || '';
@@ -100,6 +107,7 @@ async function syncProducts() {
           width,
           size,
           stockLevel: details.totalinstock || 0,
+          lastModified: exoLastModified,
         },
         create: {
           stockCode: details.id,
@@ -112,6 +120,7 @@ async function syncProducts() {
           width,
           size,
           stockLevel: details.totalinstock || 0,
+          lastModified: exoLastModified,
         },
       });
       console.log(`Synced product: ${details.id}`);
@@ -140,38 +149,9 @@ app.get('/products', async (req, res) => {
   }
 });
 
-// API endpoint to get single product by stockCode
-app.get('/products/:stockCode', async (req, res) => {
-  try {
-    const { stockCode } = req.params;
-    const product = await prisma.product.findUnique({
-      where: { stockCode }
-    });
-    if (!product) {
-      return res.status(404).json({ error: 'Product not found' });
-    }
-    res.json(product);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch product' });
-  }
-});
-
-// Stub endpoint to push single product to Shopify (does nothing yet)
-app.post('/push-to-shopify/:stockCode', async (req, res) => {
-  const { stockCode } = req.params;
-  // TODO: Implement Shopify push logic here
-  console.log(`Stub: Pushing product ${stockCode} to Shopify`);
-  res.send(`Product ${stockCode} pushed to Shopify (stub)`);
-});
-
 // Serve frontend
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Serve product detail page
-app.get('/product', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'product.html'));
 });
 
 // Schedule sync every hour
