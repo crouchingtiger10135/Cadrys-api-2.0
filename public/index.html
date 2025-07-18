@@ -77,13 +77,13 @@
             <td class="p-4">${product.name || ''}</td>
             <td class="p-4">${product.description || ''}</td>
             <td class="p-4">${product.sku || ''}</td>
-            <td class="p-4">$${parseFloat(product.price || 0).toFixed(2)}</td>
+            <td class="p-4">$${product.price.toFixed(2)}</td>
             <td class="p-4">${product.origin || ''}</td>
             <td class="p-4">${product.length ? product.length.toFixed(2) : ''}</td>
             <td class="p-4">${product.width ? product.width.toFixed(2) : ''}</td>
             <td class="p-4">${product.size || ''}</td>
             <td class="p-4">${product.stockLevel}</td>
-            <td class="p-4"><a href="/product.html?stockCode=${product.stockCode}" class="text-indigo-600 hover:underline">View</a></td>
+            <td class="p-4"><a href="/product?stockCode=${product.stockCode}" class="text-indigo-600 hover:underline">View</a></td>
           `;
           tbody.appendChild(row);
         });

@@ -43,7 +43,7 @@
         <p><strong>Name:</strong> ${product.name || ''}</p>
         <p><strong>Description:</strong> ${product.description || ''}</p>
         <p><strong>SKU:</strong> ${product.sku || ''}</p>
-        <p><strong>Price:</strong> $${parseFloat(product.price || 0).toFixed(2)}</p>
+        <p><strong>Price:</strong> $${product.price.toFixed(2)}</p>
         <p><strong>Origin:</strong> ${product.origin || ''}</p>
         <p><strong>Length:</strong> ${product.length ? product.length.toFixed(2) : ''}</p>
         <p><strong>Width:</strong> ${product.width ? product.width.toFixed(2) : ''}</p>
@@ -56,9 +56,9 @@
       const statusEl = document.getElementById('status');
       updateStatus('Pushing to Shopify...', 'text-blue-600');
       try {
-        const response = await fetch(`/products/${stockCode}/push-to-shopify`, { method: 'POST' });
-        const data = await response.json();
-        updateStatus(data.message, 'text-green-600');
+        const response = await fetch(`/push-to-shopify/${stockCode}`, { method: 'POST' });
+        const data = await response.text();
+        updateStatus(data, 'text-green-600');
       } catch (error) {
         console.error('Error pushing to Shopify:', error);
         updateStatus('Push failed.', 'text-red-600');
