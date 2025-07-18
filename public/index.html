@@ -77,7 +77,7 @@
             <td class="p-4">${product.name || ''}</td>
             <td class="p-4">${product.description || ''}</td>
             <td class="p-4">${product.sku || ''}</td>
-            <td class="p-4">$${product.price.toFixed(2)}</td>
+            <td class="p-4">$${parseFloat(product.price || 0).toFixed(2)}</td>
             <td class="p-4">${product.origin || ''}</td>
             <td class="p-4">${product.length ? product.length.toFixed(2) : ''}</td>
             <td class="p-4">${product.width ? product.width.toFixed(2) : ''}</td>
