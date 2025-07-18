@@ -148,20 +148,20 @@ app.get('/products/:stockCode', async (req, res) => {
 });
 
 // Stub endpoint to push single product to Shopify (does nothing yet)
-app.post('/products/:stockCode/push-to-shopify', async (req, res) => {
+app.post('/push-to-shopify/:stockCode', async (req, res) => {
   const { stockCode } = req.params;
-  // TODO: Implement Shopify API call here
+  // TODO: Implement Shopify push logic here
   console.log(`Stub: Pushing product ${stockCode} to Shopify`);
-  res.json({ message: `Product ${stockCode} pushed to Shopify (stub)` });
+  res.send(`Product ${stockCode} pushed to Shopify (stub)`);
 });
 
-// Serve frontend list page
+// Serve frontend
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Serve frontend detail page
-app.get('/product/:stockCode', (req, res) => {
+// Serve product detail page
+app.get('/product', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'product.html'));
 });
 
