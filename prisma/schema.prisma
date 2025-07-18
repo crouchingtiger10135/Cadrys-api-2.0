@@ -21,4 +21,5 @@ model Product {
   stockLevel  Int
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  lastModified DateTime? // For change detection from Exo lastmodifieddateutc
 }
