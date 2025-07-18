@@ -23,9 +23,7 @@ const exoHeaders = {
   'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
 };
 
-let isSyncing = false; // Lock to prevent concurrent syncs
-
-// Function to fetch with retries
+// Function to fetch with retries and longer backoff
 async function fetchWithRetry(url, options, retries = 5, backoff = 2000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -41,11 +39,11 @@ async function fetchWithRetry(url, options, retries = 5, backoff = 2000) {
   }
 }
 
-// Function to fetch all brief products list with pagination
+// Function to fetch all brief products list with pagination and smaller page size
 async function fetchExoProductsList() {
   let allProducts = [];
   let page = 1;
-  const pageSize = 100; // Max allowed is 100
+  const pageSize = 50; // Reduced to avoid timeouts
   while (true) {
     const url = `${exoBaseUrl}/stockitem?page=${page}&pagesize=${pageSize}`;
     const products = await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
@@ -63,80 +61,70 @@ async function fetchExoProductDetails(id) {
   return await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
 }
 
-// Function to sync products to DB with change detection
+// Function to sync products to DB
 async function syncProducts() {
-  if (isSyncing) {
-    console.log('Sync already in progress, skipping');
-    return;
-  }
-  isSyncing = true;
   try {
     const exoProductsList = await fetchExoProductsList();
     console.log(`Total fetched products: ${exoProductsList.length}`);
 
+    let savedCount = 0;
     for (const briefProduct of exoProductsList) {
-      const details = await fetchExoProductDetails(briefProduct.id);
-      console.log(`Fetched details for ${briefProduct.id}:`, details);
+      try {
+        const details = await fetchExoProductDetails(briefProduct.id);
+        console.log(`Fetched details for ${briefProduct.id}:`, details);
 
-      const existingProduct = await prisma.product.findUnique({ where: { stockCode: details.id } });
-      const exoLastModified = new Date(details.lastmodifieddateutc);
-      if (existingProduct && existingProduct.lastModified >= exoLastModified) {
-        console.log(`Product ${details.id} not changed, skipping update`);
-        continue;
+        const extrafields = details.extrafields || [];
+        const origin = extrafields.find(f => f.name === 'Origin')?.value || '';
+        const lengthValue = extrafields.find(f => f.name === 'Length')?.value;
+        const widthValue = extrafields.find(f => f.name === 'Width')?.value;
+        const length = lengthValue ? parseFloat(lengthValue) : null;
+        const width = widthValue ? parseFloat(widthValue) : null;
+        const size = (length && width) ? `${length} x ${width}` : '';
+        const sku = details.barcode1 || details.id || '';
+        const webdescription = extrafields.find(f => f.name === 'webdescription')?.value || details.notes || '';
+
+        await prisma.product.upsert({
+          where: { stockCode: details.id },
+          update: {
+            name: details.description || 'Untitled',
+            description: webdescription,
+            sku,
+            price: details.saleprices?.[0]?.price || details.latestcost || 0,
+            origin,
+            length,
+            width,
+            size,
+            stockLevel: details.totalinstock || 0,
+          },
+          create: {
+            stockCode: details.id,
+            name: details.description || 'Untitled',
+            description: webdescription,
+            sku,
+            price: details.saleprices?.[0]?.price || details.latestcost || 0,
+            origin,
+            length,
+            width,
+            size,
+            stockLevel: details.totalinstock || 0,
+          },
+        });
+        savedCount++;
+        console.log(`Synced product: ${details.id}`);
+      } catch (detailError) {
+        console.error(`Error syncing product ${briefProduct.id}:`, detailError);
       }
-
-      const extrafields = details.extrafields || [];
-      const origin = extrafields.find(f => f.name === 'Origin')?.value || '';
-      const lengthValue = extrafields.find(f => f.name === 'Length')?.value;
-      const widthValue = extrafields.find(f => f.name === 'Width')?.value;
-      const length = lengthValue ? parseFloat(lengthValue) : null;
-      const width = widthValue ? parseFloat(widthValue) : null;
-      const size = (length && width) ? `${length} x ${width}` : '';
-      const sku = details.barcode1 || details.id || '';
-      const webdescription = extrafields.find(f => f.name === 'webdescription')?.value || details.notes || '';
-
-      await prisma.product.upsert({
-        where: { stockCode: details.id },
-        update: {
-          name: details.description || 'Untitled',
-          description: webdescription,
-          sku,
-          price: details.saleprices?.[0]?.price || details.latestcost || 0,
-          origin,
-          length,
-          width,
-          size,
-          stockLevel: details.totalinstock || 0,
-          lastModified: exoLastModified,
-        },
-        create: {
-          stockCode: details.id,
-          name: details.description || 'Untitled',
-          description: webdescription,
-          sku,
-          price: details.saleprices?.[0]?.price || details.latestcost || 0,
-          origin,
-          length,
-          width,
-          size,
-          stockLevel: details.totalinstock || 0,
-          lastModified: exoLastModified,
-        },
-      });
-      console.log(`Synced product: ${details.id}`);
     }
-    console.log('Sync complete');
+    console.log('Sync complete. Saved products: ', savedCount);
   } catch (error) {
     console.error('Sync error:', error);
-  } finally {
-    isSyncing = false;
   }
 }
 
 // API endpoint to trigger sync manually
 app.get('/sync', async (req, res) => {
-  syncProducts(); // Run in background
-  res.send('Product sync triggered (running in background)');
+  await syncProducts();
+  res.send('Product sync triggered');
 });
 
 // API endpoint to get all products
