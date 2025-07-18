@@ -23,17 +23,19 @@ const exoHeaders = {
   'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
 };
 
+let isSyncing = false; // Lock to prevent concurrent syncs
+
 // Function to fetch with retries
-async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
+async function fetchWithRetry(url, options, retries = 5, backoff = 2000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const response = await axios.get(url, options);
       return response.data;
     } catch (error) {
-      if (attempt === retries || error.response.status !== 504) {
+      if (attempt === retries || (error.response && error.response.status !== 504)) {
         throw error;
       }
-      console.log(`Retry ${attempt} for ${url} after 504 error...`);
+      console.log(`Retry ${attempt}/${retries} for ${url} after 504 error... Waiting ${backoff * attempt / 1000}s`);
       await new Promise(resolve => setTimeout(resolve, backoff * attempt));
     }
   }
@@ -43,7 +45,7 @@ async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
 async function fetchExoProductsList() {
   let allProducts = [];
   let page = 1;
-  const pageSize = 100; // Max allowed is 100
+  const pageSize = 50; // Reduced for stability
   while (true) {
     const url = `${exoBaseUrl}/stockitem?page=${page}&pagesize=${pageSize}`;
     const products = await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
@@ -63,6 +65,11 @@ async function fetchExoProductDetails(id) {
 
 // Function to sync products to DB
 async function syncProducts() {
+  if (isSyncing) {
+    console.log('Sync already in progress, skipping');
+    return;
+  }
+  isSyncing = true;
   try {
     const exoProductsList = await fetchExoProductsList();
     console.log(`Total fetched products: ${exoProductsList.length}`);
@@ -112,13 +119,15 @@ async function syncProducts() {
     console.log('Sync complete');
   } catch (error) {
     console.error('Sync error:', error);
+  } finally {
+    isSyncing = false;
   }
 }
 
 // API endpoint to trigger sync manually
 app.get('/sync', async (req, res) => {
-  await syncProducts();
-  res.send('Product sync triggered');
+  syncProducts(); // Run in background
+  res.send('Product sync triggered (running in background)');
 });
 
 // API endpoint to get all products
