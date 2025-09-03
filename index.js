@@ -12,7 +12,7 @@ const prisma = new PrismaClient();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// EXO auth config
+// EXO API Credentials
 const exoBaseUrl = process.env.EXO_BASE_URL || 'https://exo.api.myob.com';
 const exoAuth = {
   username: process.env.EXO_USERNAME,
@@ -23,7 +23,7 @@ const exoHeaders = {
   'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
 };
 
-// Retry logic for network resilience
+// Retry helper
 async function fetchWithRetry(url, options, retries = 5, backoff = 2000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -39,49 +39,55 @@ async function fetchWithRetry(url, options, retries = 5, backoff = 2000) {
   }
 }
 
-// ✅ Correctly paginated product list fetch
+// Fetch paginated product list
 async function fetchExoProductsList() {
   let allProducts = [];
-  let skip = 0;
-  const top = 100;
+  let page = 1;
+  const pageSize = 100;
 
   while (true) {
-    const url = `${exoBaseUrl}/StockItem?$top=${top}&$skip=${skip}`;
-    const products = await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
+    const url = `${exoBaseUrl}/stockitem?page=${page}&pagesize=${pageSize}`;
+    console.log(`Fetching: ${url}`);
+    const products = await fetchWithRetry(url, {
+      auth: exoAuth,
+      headers: exoHeaders,
+    });
 
     if (!products || products.length === 0) break;
-    allProducts.push(...products);
-    console.log(`Fetched ${products.length} products at skip=${skip}`);
 
-    skip += top;
+    allProducts = allProducts.concat(products);
+    console.log(`✅ Page ${page}: ${products.length} products`);
+
+    if (products.length < pageSize) break; // End
+    page++;
   }
 
+  console.log(`✅ Total fetched products: ${allProducts.length}`);
   return allProducts;
 }
 
-// Fetch full product detail by ID
+// Fetch product details
 async function fetchExoProductDetails(id) {
-  const url = `${exoBaseUrl}/StockItem('${id}')`;
+  const url = `${exoBaseUrl}/stockitem/${id}`;
   return await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
 }
 
-// Save all products to DB
+// Sync to DB
 async function syncProducts() {
   try {
-    const productList = await fetchExoProductsList();
-    console.log(`Total products fetched: ${productList.length}`);
+    const exoProductsList = await fetchExoProductsList();
+    console.log(`🔄 Syncing ${exoProductsList.length} products...`);
 
     let savedCount = 0;
-    for (const briefProduct of productList) {
+    for (const briefProduct of exoProductsList) {
       try {
         const details = await fetchExoProductDetails(briefProduct.id);
-        const extrafields = details.extrafields || [];
+        console.log(`📦 ${briefProduct.id}: ${details.description}`);
 
+        const extrafields = details.extrafields || [];
         const origin = extrafields.find(f => f.name === 'Origin')?.value || '';
-        const lengthValue = extrafields.find(f => f.name === 'Length')?.value;
-        const widthValue = extrafields.find(f => f.name === 'Width')?.value;
-        const length = lengthValue ? parseFloat(lengthValue) : null;
-        const width = widthValue ? parseFloat(widthValue) : null;
+        const length = parseFloat(extrafields.find(f => f.name === 'Length')?.value || '') || null;
+        const width = parseFloat(extrafields.find(f => f.name === 'Width')?.value || '') || null;
         const size = (length && width) ? `${length} x ${width}` : '';
         const sku = details.barcode1 || details.id || '';
         const webdescription = extrafields.find(f => f.name === 'webdescription')?.value || details.notes || '';
@@ -113,46 +119,45 @@ async function syncProducts() {
           },
         });
 
-        console.log(`✅ Synced product: ${details.id}`);
         savedCount++;
-      } catch (err) {
-        console.error(`❌ Error syncing ${briefProduct.id}:`, err.message);
+      } catch (detailError) {
+        console.error(`❌ Failed product ${briefProduct.id}:`, detailError.message);
       }
     }
 
-    console.log(`✅ Sync complete. Total saved: ${savedCount}`);
-  } catch (err) {
-    console.error('❌ Sync error:', err.message);
+    console.log(`✅ Sync complete: ${savedCount} products saved`);
+  } catch (error) {
+    console.error('❌ Sync error:', error.message);
   }
 }
 
-// Manual sync trigger
+// API: Trigger manual sync
 app.get('/sync', async (req, res) => {
   await syncProducts();
-  res.send('Product sync triggered');
+  res.send('✅ Sync triggered.');
 });
 
-// Fetch all products
+// API: Get products
 app.get('/products', async (req, res) => {
   try {
     const products = await prisma.product.findMany();
     res.json(products);
-  } catch (err) {
+  } catch (error) {
     res.status(500).json({ error: 'Failed to fetch products' });
   }
 });
 
-// Home route
+// Serve frontend
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// ⏰ Scheduled sync every hour
+// CRON: Run sync every hour
 cron.schedule('0 * * * *', syncProducts);
 
-// Cleanup on shutdown
+// Graceful shutdown
 const shutdown = async () => {
-  console.log('Shutting down gracefully...');
+  console.log('🔻 Shutting down...');
   await prisma.$disconnect();
   process.exit(0);
 };
@@ -160,5 +165,8 @@ const shutdown = async () => {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-// 🚀 Start app
-app.listen(port, '0.0.0.0', () => console.log(`App listening on port ${port}`));
+// Start server
+app.listen(port, '0.0.0.0', () => {
+  console.log(`🚀 App listening on port ${port}`);
+});
+
