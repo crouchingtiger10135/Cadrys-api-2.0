@@ -6,13 +6,13 @@ const { PrismaClient } = require('@prisma/client');
 const path = require('path');
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3000; // Railway will set PORT; fallback only for local
 const prisma = new PrismaClient();
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'))); // Serve static frontend files
 
-// EXO API Credentials
+// Custom Exo client
 const exoBaseUrl = process.env.EXO_BASE_URL || 'https://exo.api.myob.com';
 const exoAuth = {
   username: process.env.EXO_USERNAME,
@@ -23,7 +23,7 @@ const exoHeaders = {
   'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN
 };
 
-// Retry helper
+// Function to fetch with retries and longer backoff
 async function fetchWithRetry(url, options, retries = 5, backoff = 2000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -39,55 +39,46 @@ async function fetchWithRetry(url, options, retries = 5, backoff = 2000) {
   }
 }
 
-// Fetch paginated product list
+// Function to fetch all brief products list with pagination and smaller page size
 async function fetchExoProductsList() {
   let allProducts = [];
   let page = 1;
-  const pageSize = 100;
-
+  const pageSize = 50; // Reduced to avoid timeouts
   while (true) {
     const url = `${exoBaseUrl}/stockitem?page=${page}&pagesize=${pageSize}`;
-    console.log(`Fetching: ${url}`);
-    const products = await fetchWithRetry(url, {
-      auth: exoAuth,
-      headers: exoHeaders,
-    });
-
-    if (!products || products.length === 0) break;
-
+    const products = await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
+    if (products.length === 0) break; // No more pages
     allProducts = allProducts.concat(products);
-    console.log(`✅ Page ${page}: ${products.length} products`);
-
-    if (products.length < pageSize) break; // End
+    console.log(`Fetched page ${page} with ${products.length} products`);
     page++;
   }
-
-  console.log(`✅ Total fetched products: ${allProducts.length}`);
   return allProducts;
 }
 
-// Fetch product details
+// Function to fetch detailed product by id with retry
 async function fetchExoProductDetails(id) {
   const url = `${exoBaseUrl}/stockitem/${id}`;
   return await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
 }
 
-// Sync to DB
+// Function to sync products to DB
 async function syncProducts() {
   try {
     const exoProductsList = await fetchExoProductsList();
-    console.log(`🔄 Syncing ${exoProductsList.length} products...`);
+    console.log(`Total fetched products: ${exoProductsList.length}`);
 
     let savedCount = 0;
     for (const briefProduct of exoProductsList) {
       try {
         const details = await fetchExoProductDetails(briefProduct.id);
-        console.log(`📦 ${briefProduct.id}: ${details.description}`);
+        console.log(`Fetched details for ${briefProduct.id}:`, details);
 
         const extrafields = details.extrafields || [];
         const origin = extrafields.find(f => f.name === 'Origin')?.value || '';
-        const length = parseFloat(extrafields.find(f => f.name === 'Length')?.value || '') || null;
-        const width = parseFloat(extrafields.find(f => f.name === 'Width')?.value || '') || null;
+        const lengthValue = extrafields.find(f => f.name === 'Length')?.value;
+        const widthValue = extrafields.find(f => f.name === 'Width')?.value;
+        const length = lengthValue ? parseFloat(lengthValue) : null;
+        const width = widthValue ? parseFloat(widthValue) : null;
         const size = (length && width) ? `${length} x ${width}` : '';
         const sku = details.barcode1 || details.id || '';
         const webdescription = extrafields.find(f => f.name === 'webdescription')?.value || details.notes || '';
@@ -118,26 +109,25 @@ async function syncProducts() {
             stockLevel: details.totalinstock || 0,
           },
         });
-
         savedCount++;
+        console.log(`Synced product: ${details.id}`);
       } catch (detailError) {
-        console.error(`❌ Failed product ${briefProduct.id}:`, detailError.message);
+        console.error(`Error syncing product ${briefProduct.id}:`, detailError);
       }
     }
-
-    console.log(`✅ Sync complete: ${savedCount} products saved`);
+    console.log('Sync complete. Saved products: ', savedCount);
   } catch (error) {
-    console.error('❌ Sync error:', error.message);
+    console.error('Sync error:', error);
   }
 }
 
-// API: Trigger manual sync
+// API endpoint to trigger sync manually
 app.get('/sync', async (req, res) => {
   await syncProducts();
-  res.send('✅ Sync triggered.');
+  res.send('Product sync triggered');
 });
 
-// API: Get products
+// API endpoint to get all products
 app.get('/products', async (req, res) => {
   try {
     const products = await prisma.product.findMany();
@@ -152,21 +142,17 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// CRON: Run sync every hour
+// Schedule sync every hour
 cron.schedule('0 * * * *', syncProducts);
 
-// Graceful shutdown
+// Graceful shutdown handlers
 const shutdown = async () => {
-  console.log('🔻 Shutting down...');
-  await prisma.$disconnect();
-  process.exit(0);
+  console.log('Shutting down gracefully...');
+  await prisma.$disconnect(); // Close Prisma connections
+  process.exit(0); // Exit cleanly
 };
 
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-// Start server
-app.listen(port, '0.0.0.0', () => {
-  console.log(`🚀 App listening on port ${port}`);
-});
-
+app.listen(port, '0.0.0.0', () => console.log(`App listening on port ${port}`));
