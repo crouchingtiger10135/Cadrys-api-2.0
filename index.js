@@ -34,7 +34,7 @@ const axiosClient = axios.create({
 });
 
 // ---- Helpers ----
-function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (function envPreflight() {
   const required = ['DATABASE_URL', 'EXO_BASE_URL', 'EXO_USERNAME', 'EXO_PASSWORD', 'EXO_DEV_KEY', 'EXO_ACCESS_TOKEN'];
@@ -84,6 +84,93 @@ async function fetchWithRetry(url, options, retries = 6, baseBackoffMs = 2000) {
     }
   }
 }
+
+// ---------- Extra field utilities (robust origin/length/width/size) ----------
+function normalizeKey(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, ''); // strip spaces/punct
+}
+
+function getFirstDefined(...vals) {
+  for (const v of vals) {
+    if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+  }
+  return undefined;
+}
+
+// Try to read a value that might be nested
+function extractValue(obj) {
+  if (obj == null) return undefined;
+  if (typeof obj === 'string' || typeof obj === 'number') return obj;
+  return getFirstDefined(
+    obj.value?.value,
+    obj.value?.text,
+    obj.value?.toString?.(),
+    obj.value,
+    obj.text,
+    obj.val,
+    obj.displayValue,
+    obj.display,
+    obj.data
+  );
+}
+
+// Return extras from various shapes EXO might use
+function getExtraFields(details) {
+  const candidates = [
+    details?.extrafields,
+    details?.extraFields,
+    details?.extrafieldvalues,
+    details?.userfields,
+    details?.userFields,
+  ];
+  for (const c of candidates) {
+    if (Array.isArray(c) && c.length) return c;
+  }
+  return Array.isArray(details?.extrafields) ? details.extrafields : [];
+}
+
+/**
+ * Find a field by aliases across common label keys (case-insensitive)
+ * aliases: ['origin','countryoforigin','madein'] etc.
+ */
+function findExtraField(extras, aliases) {
+  if (!Array.isArray(extras) || extras.length === 0) return undefined;
+  const want = new Set(aliases.map(normalizeKey));
+  for (const f of extras) {
+    const nameCandidates = [
+      f?.name, f?.label, f?.caption, f?.description,
+      f?.displayname, f?.displayName, f?.fieldname, f?.fieldName, f?.key,
+    ];
+    for (const cand of nameCandidates) {
+      if (!cand) continue;
+      if (want.has(normalizeKey(cand))) return f;
+    }
+  }
+  // fuzzy contains as last resort
+  for (const f of extras) {
+    const nameCandidates = [f?.name, f?.label, f?.caption, f?.description, f?.displayname, f?.displayName];
+    const joined = nameCandidates.filter(Boolean).map(String).join(' ').toLowerCase();
+    if (!joined) continue;
+    for (const alias of aliases) {
+      if (joined.includes(alias.toLowerCase())) return f;
+    }
+  }
+  return undefined;
+}
+
+// Parse a number out of "240", "240 cm", "2.4 m", "2,40", '170"'
+function parseMeasure(val) {
+  if (val == null) return null;
+  let s = String(val).trim();
+  s = s.replace(/,/g, '.'); // decimal comma → dot
+  const m = s.match(/-?\d+(\.\d+)?/);
+  if (!m) return null;
+  const n = parseFloat(m[0]);
+  return Number.isNaN(n) ? null : n;
+}
+// ---------------------------------------------------------------------------
 
 // ---- EXO fetchers ----
 // Step-down pagination sizes to survive slow pages/timeouts
@@ -163,23 +250,56 @@ async function syncProducts() {
         await sleep(100);
         const details = await fetchExoProductDetails(briefId);
 
-        const extrafields = Array.isArray(details?.extrafields) ? details.extrafields : [];
-        const getXF = (name) => extrafields.find((f) => f?.name === name)?.value;
+        // ---------- robust Origin / Length / Width / Size extraction ----------
+        const extras = getExtraFields(details);
 
-        const origin = getXF('Origin') || '';
-        const lengthValue = getXF('Length');
-        const widthValue  = getXF('Width');
+        // Origin
+        const originField = findExtraField(extras, ['origin','countryoforigin','country','madein','made']);
+        const origin = String(extractValue(originField) ?? '').trim();
 
-        const length = lengthValue != null && String(lengthValue).trim() !== ''
-          ? parseFloat(String(lengthValue))
-          : null;
-        const width  = widthValue  != null && String(widthValue).trim() !== ''
-          ? parseFloat(String(widthValue))
-          : null;
+        // Length / Width (with common aliases)
+        const lengthField = findExtraField(extras, [
+          'length','lengthcm','length(mm)','length(cm)','length(m)','ruglength','size length'
+        ]);
+        const widthField  = findExtraField(extras, [
+          'width','widthcm','width(mm)','width(cm)','width(m)','rugwidth','size width'
+        ]);
 
-        const size = length && width ? `${length} x ${width}` : '';
+        let length = lengthField ? parseMeasure(extractValue(lengthField)) : null;
+        let width  = widthField  ? parseMeasure(extractValue(widthField )) : null;
+
+        // Fallback to obvious top-level props
+        if (length == null) length = parseMeasure(details?.length ?? details?.Length ?? details?.dimensions?.length);
+        if (width  == null) width  = parseMeasure(details?.width  ?? details?.Width  ?? details?.dimensions?.width);
+
+        // Combined "Size" like "240 x 170" → parse to fill missing sides
+        let size = '';
+        if (length && width) {
+          size = `${length} x ${width}`;
+        } else {
+          const sizeField = findExtraField(extras, ['size','dimensions','size(cm)','overall size','rug size']);
+          const sizeRaw = sizeField ? String(extractValue(sizeField) ?? '') : '';
+          if (sizeRaw) {
+            const nums = sizeRaw.replace(/,/g, '.').match(/-?\d+(\.\d+)?/g);
+            if (nums && nums.length >= 2) {
+              const a = parseFloat(nums[0]);
+              const b = parseFloat(nums[1]);
+              if (length == null && !Number.isNaN(a)) length = a;
+              if (width  == null && !Number.isNaN(b)) width  = b;
+              if (length && width) size = `${length} x ${width}`;
+            } else {
+              size = sizeRaw; // keep original if not parseable
+            }
+          }
+        }
+        // ---------------------------------------------------------------------
+
         const sku  = details?.barcode1 || String(details?.id ?? briefId) || '';
-        const webdescription = getXF('webdescription') || details?.notes || '';
+        const webDescField =
+          findExtraField(extras, ['webdescription','web description','online description']);
+        const webdescription =
+          String(extractValue(webDescField) ?? '') || details?.notes || '';
+
         const stockCode = String(details?.id ?? briefId);
 
         // Decimal-safe price (Prisma Decimal accepts string)
@@ -234,6 +354,26 @@ app.get('/exo-health', async (_req, res) => {
       err: e?.response?.status ?? e.message,
       data: e?.response?.data ?? null
     });
+  }
+});
+
+// Inspect raw extras for a single product id (helps verify label names)
+app.get('/debug/extras/:id', async (req, res) => {
+  try {
+    const details = await fetchExoProductDetails(req.params.id);
+    const extras = getExtraFields(details);
+    const view = (extras || []).map(f => ({
+      keys: {
+        name: f?.name, label: f?.label, caption: f?.caption,
+        description: f?.description, displayname: f?.displayname ?? f?.displayName,
+        fieldname: f?.fieldname ?? f?.fieldName, key: f?.key
+      },
+      rawValue: f?.value,
+      value: extractValue(f)
+    }));
+    res.json({ ok: true, count: view.length, extras: view.slice(0, 100) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
   }
 });
 
