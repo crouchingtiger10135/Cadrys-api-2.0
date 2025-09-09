@@ -1,12 +1,16 @@
 {
   "name": "exo-inventory-app",
   "version": "1.0.0",
+  "private": true,
   "description": "API to pull product data from MYOB Exo, store in DB, and view via frontend",
   "main": "index.js",
   "scripts": {
+    "postinstall": "prisma generate",
+    "prestart": "prisma migrate deploy",
     "start": "node index.js",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate deploy"
+    "prisma:migrate": "prisma migrate deploy",
+    "prisma:studio": "prisma studio"
   },
   "dependencies": {
     "@prisma/client": "^6.12.0",
@@ -21,6 +25,5 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "author": "Your Name",
   "license": "MIT"
 }
