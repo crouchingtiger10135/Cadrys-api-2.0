@@ -8,18 +8,21 @@ datasource db {
 }
 
 model Product {
-  id          Int      @id @default(autoincrement())
-  stockCode   String   @unique
-  name        String?  // Mapped from description
-  description String?  // Mapped from webdescription or notes
-  sku         String?
-  price       Decimal  // Use Decimal for money precision
-  origin      String?
-  length      Float?
-  width       Float?
-  size        String?  // Computed as `${length} x ${width}`
-  stockLevel  Int
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  lastModified DateTime? // For change detection from Exo lastmodifieddateutc
+  id           Int       @id @default(autoincrement())
+  stockCode    String    @unique                         // used in upsert(where)
+  name         String    @default("Untitled")            // you always provide one
+  description  String?                                   // webdescription or notes
+  sku          String?                                   // consider @unique if true SKU
+  price        Decimal    @db.Decimal(12, 2) @default(0) // money-safe
+  origin       String?
+  length       Float?
+  width        Float?
+  size         String?                                   // e.g. "240 x 170"
+  stockLevel   Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastModified DateTime?                                 // from Exo lastmodifieddateutc
+
+  @@index([sku])
+  @@index([name])
 }
