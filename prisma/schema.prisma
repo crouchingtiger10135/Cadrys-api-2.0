@@ -1,6 +1,4 @@
-generator client {
-  provider = "prisma-client-js"
-}
+generator client { provider = "prisma-client-js" }
 
 datasource db {
   provider = "postgresql"
@@ -9,19 +7,19 @@ datasource db {
 
 model Product {
   id           Int       @id @default(autoincrement())
-  stockCode    String    @unique                         // used in upsert(where)
-  name         String    @default("Untitled")            // you always provide one
-  description  String?                                   // webdescription or notes
-  sku          String?                                   // consider @unique if true SKU
-  price        Decimal    @db.Decimal(12, 2) @default(0) // money-safe
+  stockCode    String    @unique
+  name         String    @default("Untitled")
+  description  String?
+  sku          String?
+  price        Decimal   @db.Decimal(12, 2) @default(0)
   origin       String?
   length       Float?
   width        Float?
-  size         String?                                   // e.g. "240 x 170"
+  size         String?
   stockLevel   Int       @default(0)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
-  lastModified DateTime?                                 // from Exo lastmodifieddateutc
+  lastModified DateTime?
 
   @@index([sku])
   @@index([name])
