@@ -1,77 +1,201 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Product Details</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Product</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-start p-4 md:p-8">
-  <div class="w-full max-w-4xl bg-white shadow-xl rounded-xl p-6">
-    <header class="mb-6">
-      <h1 class="text-3xl font-semibold text-indigo-600">Product Details</h1>
-    </header>
-    <div id="productDetails" class="space-y-4">
-      <!-- Product details will be loaded here -->
+<body class="bg-gray-100 min-h-screen p-4 md:p-8">
+  <div class="mx-auto w-full max-w-5xl">
+    <!-- Header / Breadcrumbs -->
+    <div class="mb-4">
+      <a href="/" class="inline-flex items-center text-sm text-indigo-600 hover:text-indigo-800">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M10.828 12 16 17.172 14.586 18.586 8 12l6.586-6.586L16 6.828 10.828 12z"/>
+        </svg>
+        Back to list
+      </a>
     </div>
-    <div id="status" class="mt-4 text-sm font-medium"></div>
-    <div class="mt-6 flex space-x-4">
-      <button onclick="pushToShopify()" class="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition">Push to Shopify</button>
-      <a href="/" class="bg-gray-600 text-white px-6 py-3 rounded-lg hover:bg-gray-700 transition">Back to List</a>
+
+    <!-- Card -->
+    <div class="bg-white shadow-xl rounded-xl overflow-hidden">
+      <!-- Skeleton / Loading -->
+      <div id="loading" class="p-6 animate-pulse">
+        <div class="h-6 w-40 bg-gray-200 rounded mb-4"></div>
+        <div class="h-8 w-64 bg-gray-200 rounded mb-6"></div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div class="md:col-span-1 h-56 bg-gray-200 rounded"></div>
+          <div class="md:col-span-2 space-y-3">
+            <div class="h-4 w-3/4 bg-gray-200 rounded"></div>
+            <div class="h-4 w-2/3 bg-gray-200 rounded"></div>
+            <div class="h-4 w-1/2 bg-gray-200 rounded"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Content -->
+      <div id="content" class="hidden">
+        <header class="p-6 border-b">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 id="p-name" class="text-2xl md:text-3xl font-semibold text-gray-900">Product</h1>
+              <p class="text-sm text-gray-500 mt-1">
+                <span id="p-stockcode" class="px-2 py-0.5 rounded bg-gray-100 border text-gray-700"></span>
+                <span id="p-sku" class="ml-2 px-2 py-0.5 rounded bg-gray-100 border text-gray-700"></span>
+              </p>
+            </div>
+            <div class="text-right">
+              <div id="p-price" class="text-3xl font-bold text-emerald-600">$0.00</div>
+              <div id="p-stockBadge" class="mt-1 inline-flex items-center px-2 py-0.5 rounded text-sm font-medium"></div>
+            </div>
+          </div>
+        </header>
+
+        <section class="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+          <!-- Image / Placeholder -->
+          <div class="md:col-span-1">
+            <div class="w-full aspect-[4/3] bg-gray-50 border rounded-lg flex items-center justify-center overflow-hidden">
+              <div id="p-image" class="text-gray-400 text-sm">
+                <!-- No image available -->
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mb-2 opacity-60" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M19 3H5c-1.1 0-2 .9-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM8.5 13.5l2.5 3.01L14.5 12l3.5 4.5H6l2.5-3z"/>
+                </svg>
+                No image
+              </div>
+            </div>
+          </div>
+
+          <!-- Details -->
+          <div class="md:col-span-2">
+            <div class="prose max-w-none">
+              <h2 class="text-lg font-semibold text-gray-800 mb-2">Description</h2>
+              <p id="p-description" class="text-gray-700 whitespace-pre-line"></p>
+            </div>
+
+            <div class="mt-6">
+              <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Attributes</h3>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div class="flex items-center justify-between rounded-lg border p-3">
+                  <span class="text-gray-600">Origin</span>
+                  <span id="p-origin" class="font-medium text-gray-900"></span>
+                </div>
+                <div class="flex items-center justify-between rounded-lg border p-3">
+                  <span class="text-gray-600">Length</span>
+                  <span id="p-length" class="font-medium text-gray-900"></span>
+                </div>
+                <div class="flex items-center justify-between rounded-lg border p-3">
+                  <span class="text-gray-600">Width</span>
+                  <span id="p-width" class="font-medium text-gray-900"></span>
+                </div>
+                <div class="flex items-center justify-between rounded-lg border p-3">
+                  <span class="text-gray-600">Size</span>
+                  <span id="p-size" class="font-medium text-gray-900"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-6 text-sm text-gray-500">
+              <span id="p-meta"></span>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Status / Errors -->
+      <div id="status" class="p-4 text-sm font-medium"></div>
     </div>
   </div>
 
   <script>
-    const urlParams = new URLSearchParams(window.location.search);
-    const stockCode = urlParams.get('stockCode');
+    const params = new URLSearchParams(window.location.search);
+    const stockCode = params.get('stockCode');
+
+    const $ = (id) => document.getElementById(id);
+    const loadingEl = $('loading');
+    const contentEl = $('content');
+    const statusEl = $('status');
+
+    function setStatus(msg, color='text-gray-600') {
+      statusEl.textContent = msg || '';
+      statusEl.className = 'p-4 text-sm font-medium ' + color;
+    }
+
+    function fmtMoney(v) {
+      const n = Number(v ?? 0);
+      if (Number.isNaN(n)) return '$0.00';
+      return n.toLocaleString(undefined, { style: 'currency', currency: 'AUD' });
+    }
+
+    function fmtNum(n, unit='') {
+      if (n === null || n === undefined || n === '') return '—';
+      const v = Number(n);
+      if (Number.isNaN(v)) return String(n);
+      return unit ? `${v.toFixed(2)} ${unit}` : v.toFixed(2);
+    }
+
+    function stockBadge(level) {
+      const n = Number(level || 0);
+      const badge = $('p-stockBadge');
+      badge.textContent = n > 0 ? `In stock: ${n}` : 'Out of stock';
+      badge.className =
+        'mt-1 inline-flex items-center px-2 py-0.5 rounded text-sm font-medium ' +
+        (n > 0 ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-1 ring-rose-200');
+    }
 
     async function fetchProduct() {
+      if (!stockCode) {
+        setStatus('Missing ?stockCode=… in the URL', 'text-red-600');
+        return;
+      }
       try {
-        const response = await fetch(`/products/${stockCode}`);
-        const product = await response.json();
+        setStatus('Loading product…', 'text-gray-500');
+        const res = await fetch(`/products/${encodeURIComponent(stockCode)}`);
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || res.statusText);
+        }
+        const product = await res.json();
         renderProduct(product);
-      } catch (error) {
-        console.error('Error fetching product:', error);
-        updateStatus('Error loading product details.', 'text-red-600');
+        setStatus('');
+      } catch (err) {
+        console.error('Error fetching product:', err);
+        setStatus('Error loading product details.', 'text-red-600');
+      } finally {
+        loadingEl.classList.add('hidden');
+        contentEl.classList.remove('hidden');
       }
     }
 
-    function renderProduct(product) {
-      const detailsDiv = document.getElementById('productDetails');
-      detailsDiv.innerHTML = `
-        <p><strong>Stock Code:</strong> ${product.stockCode}</p>
-        <p><strong>Name:</strong> ${product.name || ''}</p>
-        <p><strong>Description:</strong> ${product.description || ''}</p>
-        <p><strong>SKU:</strong> ${product.sku || ''}</p>
-        <p><strong>Price:</strong> $${parseFloat(product.price || 0).toFixed(2)}</p>
-        <p><strong>Origin:</strong> ${product.origin || ''}</p>
-        <p><strong>Length:</strong> ${product.length ? product.length.toFixed(2) : ''}</p>
-        <p><strong>Width:</strong> ${product.width ? product.width.toFixed(2) : ''}</p>
-        <p><strong>Size:</strong> ${product.size || ''}</p>
-        <p><strong>Stock Level:</strong> ${product.stockLevel}</p>
-      `;
+    function renderProduct(p) {
+      // Title & badges
+      $('p-name').textContent = p.name || 'Product';
+      document.title = p.name ? `${p.name} • Product` : 'Product';
+      $('p-stockcode').textContent = `StockCode: ${p.stockCode}`;
+      $('p-sku').textContent = p.sku ? `SKU: ${p.sku}` : 'SKU: —';
+
+      // Price & stock
+      $('p-price').textContent = fmtMoney(p.price);
+      stockBadge(p.stockLevel);
+
+      // Description
+      $('p-description').textContent = p.description || '—';
+
+      // Attributes
+      $('p-origin').textContent = p.origin || '—';
+      $('p-length').textContent = fmtNum(p.length, 'cm');
+      $('p-width').textContent  = fmtNum(p.width,  'cm');
+      $('p-size').textContent   = p.size || (p.length && p.width ? `${fmtNum(p.length)} x ${fmtNum(p.width)}` : '—');
+
+      // Meta
+      const created = p.createdAt ? new Date(p.createdAt) : null;
+      const updated = p.updatedAt ? new Date(p.updatedAt) : null;
+      const meta = [];
+      if (created) meta.push(`Created: ${created.toLocaleString()}`);
+      if (updated) meta.push(`Updated: ${updated.toLocaleString()}`);
+      $('p-meta').textContent = meta.join(' • ');
     }
 
-    async function pushToShopify() {
-      const statusEl = document.getElementById('status');
-      updateStatus('Pushing to Shopify...', 'text-blue-600');
-      try {
-        const response = await fetch(`/push-to-shopify/${stockCode}`, { method: 'POST' });
-        const data = await response.text();
-        updateStatus(data, 'text-green-600');
-      } catch (error) {
-        console.error('Error pushing to Shopify:', error);
-        updateStatus('Push failed.', 'text-red-600');
-      }
-    }
-
-    function updateStatus(message, colorClass) {
-      const statusEl = document.getElementById('status');
-      statusEl.textContent = message;
-      statusEl.className = `mt-4 text-sm font-medium ${colorClass}`;
-    }
-
-    // Load product on page load
     fetchProduct();
   </script>
 </body>
