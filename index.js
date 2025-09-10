@@ -67,7 +67,6 @@ async function fetchWithRetry(url, options, retries = 6, baseBackoffMs = 2000) {
       return res.data;
     } catch (err) {
       const code = err?.response?.status;
-      // 404 on a list page often means end-of-pages
       if (code === 404) {
         console.warn(`404 on ${url} (treating as end-of-pages)`);
         return { __END__: true };
@@ -87,19 +86,14 @@ async function fetchWithRetry(url, options, retries = 6, baseBackoffMs = 2000) {
 
 // ---------- Extra field utilities (robust origin/length/width/size) ----------
 function normalizeKey(s) {
-  return String(s || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, ''); // strip spaces/punct
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
-
 function getFirstDefined(...vals) {
   for (const v of vals) {
     if (v !== undefined && v !== null && String(v).trim() !== '') return v;
   }
   return undefined;
 }
-
-// Try to read a value that might be nested
 function extractValue(obj) {
   if (obj == null) return undefined;
   if (typeof obj === 'string' || typeof obj === 'number') return obj;
@@ -115,8 +109,6 @@ function extractValue(obj) {
     obj.data
   );
 }
-
-// Return extras from various shapes EXO might use
 function getExtraFields(details) {
   const candidates = [
     details?.extrafields,
@@ -130,11 +122,6 @@ function getExtraFields(details) {
   }
   return Array.isArray(details?.extrafields) ? details.extrafields : [];
 }
-
-/**
- * Find a field by aliases across common label keys (case-insensitive)
- * aliases: ['origin','countryoforigin','madein'] etc.
- */
 function findExtraField(extras, aliases) {
   if (!Array.isArray(extras) || extras.length === 0) return undefined;
   const want = new Set(aliases.map(normalizeKey));
@@ -148,7 +135,6 @@ function findExtraField(extras, aliases) {
       if (want.has(normalizeKey(cand))) return f;
     }
   }
-  // fuzzy contains as last resort
   for (const f of extras) {
     const nameCandidates = [f?.name, f?.label, f?.caption, f?.description, f?.displayname, f?.displayName];
     const joined = nameCandidates.filter(Boolean).map(String).join(' ').toLowerCase();
@@ -159,12 +145,10 @@ function findExtraField(extras, aliases) {
   }
   return undefined;
 }
-
-// Parse a number out of "240", "240 cm", "2.4 m", "2,40", '170"'
 function parseMeasure(val) {
   if (val == null) return null;
   let s = String(val).trim();
-  s = s.replace(/,/g, '.'); // decimal comma → dot
+  s = s.replace(/,/g, '.');
   const m = s.match(/-?\d+(\.\d+)?/);
   if (!m) return null;
   const n = parseFloat(m[0]);
@@ -173,7 +157,6 @@ function parseMeasure(val) {
 // ---------------------------------------------------------------------------
 
 // ---- EXO fetchers ----
-// Step-down pagination sizes to survive slow pages/timeouts
 async function fetchExoProductsList() {
   let all = [];
   let page = 1;
@@ -200,14 +183,14 @@ async function fetchExoProductsList() {
           pageData = items;
           usedSize = size;
         }
-        break; // success for this page (or end)
+        break;
       } catch (e) {
         if (e?.response?.status === 504) {
           console.warn(`504 on page ${page} size ${size} → stepping down…`);
           await sleep(3000);
-          continue; // try smaller size
+          continue;
         }
-        throw e; // bubble up non-transient or last retry
+        throw e;
       }
     }
 
@@ -246,18 +229,14 @@ async function syncProducts() {
       }
 
       try {
-        // small throttle between detail calls to be gentle on EXO
         await sleep(100);
         const details = await fetchExoProductDetails(briefId);
 
-        // ---------- robust Origin / Length / Width / Size extraction ----------
         const extras = getExtraFields(details);
 
-        // Origin
         const originField = findExtraField(extras, ['origin','countryoforigin','country','madein','made']);
         const origin = String(extractValue(originField) ?? '').trim();
 
-        // Length / Width (with common aliases)
         const lengthField = findExtraField(extras, [
           'length','lengthcm','length(mm)','length(cm)','length(m)','ruglength','size length'
         ]);
@@ -268,11 +247,9 @@ async function syncProducts() {
         let length = lengthField ? parseMeasure(extractValue(lengthField)) : null;
         let width  = widthField  ? parseMeasure(extractValue(widthField )) : null;
 
-        // Fallback to obvious top-level props
         if (length == null) length = parseMeasure(details?.length ?? details?.Length ?? details?.dimensions?.length);
         if (width  == null) width  = parseMeasure(details?.width  ?? details?.Width  ?? details?.dimensions?.width);
 
-        // Combined "Size" like "240 x 170" → parse to fill missing sides
         let size = '';
         if (length && width) {
           size = `${length} x ${width}`;
@@ -288,21 +265,16 @@ async function syncProducts() {
               if (width  == null && !Number.isNaN(b)) width  = b;
               if (length && width) size = `${length} x ${width}`;
             } else {
-              size = sizeRaw; // keep original if not parseable
+              size = sizeRaw;
             }
           }
         }
-        // ---------------------------------------------------------------------
 
         const sku  = details?.barcode1 || String(details?.id ?? briefId) || '';
-        const webDescField =
-          findExtraField(extras, ['webdescription','web description','online description']);
-        const webdescription =
-          String(extractValue(webDescField) ?? '') || details?.notes || '';
-
+        const webDescField = findExtraField(extras, ['webdescription','web description','online description']);
+        const webdescription = String(extractValue(webDescField) ?? '') || details?.notes || '';
         const stockCode = String(details?.id ?? briefId);
 
-        // Decimal-safe price (Prisma Decimal accepts string)
         const rawPrice = details?.saleprices?.[0]?.price ?? details?.latestcost ?? 0;
         const price = String(rawPrice);
 
@@ -330,7 +302,7 @@ async function syncProducts() {
 
 // ---- Diagnostics & API Routes ----
 
-// Express + DB health
+// Health
 app.get('/health', async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
@@ -340,7 +312,7 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-// EXO connectivity check (no DB)
+// EXO ping
 app.get('/exo-health', async (_req, res) => {
   try {
     const url = `${exoBaseUrl}/stockitem?page=1&pagesize=1`;
@@ -357,7 +329,7 @@ app.get('/exo-health', async (_req, res) => {
   }
 });
 
-// Inspect raw extras for a single product id (helps verify label names)
+// Debug extras
 app.get('/debug/extras/:id', async (req, res) => {
   try {
     const details = await fetchExoProductDetails(req.params.id);
@@ -379,15 +351,30 @@ app.get('/debug/extras/:id', async (req, res) => {
 
 // Trigger full sync
 app.get('/sync', async (_req, res) => {
-  await syncProducts(); // wait so errors show in logs before responding
+  await syncProducts();
   res.send('Product sync triggered');
 });
 
-// List products (safe sort by createdAt; switch to updatedAt if your Prisma Client is fresh)
-app.get('/products', async (_req, res) => {
+// --- Products API ---
+// List/search products: GET /products?q=...&take=200
+app.get('/products', async (req, res) => {
   try {
+    const q = (req.query.q || '').toString().trim();
+    const take = Math.min(parseInt(req.query.take || '500', 10), 1000);
+
+    const where = q ? {
+      OR: [
+        { stockCode:  { contains: q, mode: 'insensitive' } },
+        { sku:        { contains: q, mode: 'insensitive' } },
+        { name:       { contains: q, mode: 'insensitive' } },
+        { description:{ contains: q, mode: 'insensitive' } },
+      ],
+    } : {};
+
     const products = await prisma.product.findMany({
-      orderBy: { createdAt: 'desc' } // ← change to { updatedAt: 'desc' } after `npx prisma generate` in prod
+      where,
+      orderBy: { createdAt: 'desc' }, // change to updatedAt if desired
+      take,
     });
     res.json(products);
   } catch (err) {
@@ -396,35 +383,23 @@ app.get('/products', async (_req, res) => {
   }
 });
 
-// Count products
-app.get('/products/count', async (_req, res) => {
+// Single product by stockCode (for product page)
+app.get('/products/:stockCode', async (req, res) => {
   try {
-    const n = await prisma.product.count();
-    res.json({ count: n });
+    const product = await prisma.product.findUnique({
+      where: { stockCode: req.params.stockCode },
+    });
+    if (!product) return res.status(404).json({ error: 'Not found' });
+    res.json(product);
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    console.error('GET /products/:stockCode', e);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Sync a single product by id (handy for debugging)
-app.get('/sync-one/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const details = await fetchExoProductDetails(id);
-    const name = details?.description || 'Untitled';
-    const stockCode = String(details?.id ?? id);
-
-    await prisma.product.upsert({
-      where: { stockCode },
-      update: { name },
-      create: { stockCode, name, price: '0', stockLevel: 0 },
-    });
-
-    res.json({ ok: true, id });
-  } catch (e) {
-    console.error('sync-one error:', e?.message || e);
-    res.status(500).json({ ok: false, error: String(e) });
-  }
+// Serve product page at /product?stockCode=ABC
+app.get('/product', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'product.html'));
 });
 
 // ---- Cron (hourly) ----
