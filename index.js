@@ -1,424 +1,249 @@
-require('dotenv').config();
+// routes/quotes.js
 const express = require('express');
-const cron = require('node-cron');
-const axios = require('axios');
-const http = require('http');
-const https = require('https');
-const { PrismaClient } = require('@prisma/client');
-const path = require('path');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
+const { Prisma } = require('@prisma/client');
 
-const app = express();
-const port = process.env.PORT || 3000; // Railway sets PORT in prod
-const prisma = new PrismaClient();
+module.exports = function makeQuotesRouter(prisma, env = {}) {
+  const router = express.Router();
 
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public'))); // Serve static frontend files
+  // ---- Config / Defaults
+  const APP_BASE_URL = env.APP_BASE_URL || process.env.APP_BASE_URL || 'http://localhost:3000';
+  const taxRate = Number(env.QUOTE_TAX_RATE ?? process.env.QUOTE_TAX_RATE ?? '0'); // e.g. 0.1 for 10%
+  const MAIL_FROM = env.MAIL_FROM || process.env.MAIL_FROM || 'Quotes <no-reply@example.com>';
 
-// ---- EXO client config ----
-const exoBaseUrl = process.env.EXO_BASE_URL || 'https://exo.api.myob.com';
-const exoAuth = {
-  username: process.env.EXO_USERNAME,
-  password: process.env.EXO_PASSWORD,
-};
-const exoHeaders = {
-  'x-myobapi-key': process.env.EXO_DEV_KEY,
-  'x-myobapi-exotoken': process.env.EXO_ACCESS_TOKEN,
-  Accept: 'application/json',
-};
+  const transporter = (env.SMTP_HOST || process.env.SMTP_HOST)
+    ? nodemailer.createTransport({
+        host: env.SMTP_HOST || process.env.SMTP_HOST,
+        port: Number(env.SMTP_PORT || process.env.SMTP_PORT || 587),
+        secure: false,
+        auth: (env.SMTP_USER || process.env.SMTP_USER)
+          ? { user: env.SMTP_USER || process.env.SMTP_USER, pass: env.SMTP_PASS || process.env.SMTP_PASS }
+          : undefined,
+      })
+    : null;
 
-// ---- Axios client with keep-alive ----
-const axiosClient = axios.create({
-  timeout: 45000,
-  httpAgent: new http.Agent({ keepAlive: true }),
-  httpsAgent: new https.Agent({ keepAlive: true }),
-});
+  // ---- Helpers
+  const newToken = (bytes = 16) => crypto.randomBytes(bytes).toString('hex');
 
-// ---- Helpers ----
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-(function envPreflight() {
-  const required = ['DATABASE_URL', 'EXO_BASE_URL', 'EXO_USERNAME', 'EXO_PASSWORD', 'EXO_DEV_KEY', 'EXO_ACCESS_TOKEN'];
-  const missing = required.filter(k => !process.env[k] || String(process.env[k]).trim() === '');
-  if (missing.length) {
-    console.warn('⚠️ Missing env vars:', missing.join(', '));
-  } else {
-    console.log('✅ Env looks good.');
+  function publicLink(quote) {
+    const u = new URL('/quote.html', APP_BASE_URL);
+    u.searchParams.set('id', quote.id);
+    u.searchParams.set('token', quote.shareToken);
+    return u.toString();
   }
-})();
 
-function logAxiosError(err, url) {
-  if (err.response) {
-    const body = typeof err.response.data === 'string'
-      ? err.response.data
-      : JSON.stringify(err.response.data);
-    console.error(`HTTP ${err.response.status} for ${url} →`, body.slice(0, 800));
-  } else if (err.request) {
-    console.error(`No response from ${url}`);
-  } else {
-    console.error(`Axios error for ${url}:`, err.message);
+  async function recalcQuote(quoteId) {
+    const q = await prisma.quote.findUnique({ where: { id: quoteId }, include: { items: true } });
+    if (!q) throw new Error('Quote not found');
+
+    let subtotal = new Prisma.Decimal(0);
+    for (const it of q.items) {
+      const should = new Prisma.Decimal(it.price).mul(it.qty);
+      if (!it.subtotal.equals(should)) {
+        await prisma.quoteItem.update({ where: { id: it.id }, data: { subtotal: should } });
+      }
+      subtotal = subtotal.add(should);
+    }
+    const tax = new Prisma.Decimal(taxRate).mul(subtotal).toDecimalPlaces(2);
+    const total = subtotal.add(tax).toDecimalPlaces(2);
+
+    return prisma.quote.update({
+      where: { id: quoteId },
+      data: { subtotal: subtotal.toDecimalPlaces(2), tax, total },
+    });
   }
-}
 
-// GET with retry/backoff; treat 404 on paginated endpoints as end-of-pages
-async function fetchWithRetry(url, options, retries = 6, baseBackoffMs = 2000) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
+  // ---- Routes
+
+  // Create a draft quote
+  router.post('/', async (req, res) => {
     try {
-      const res = await axiosClient.get(url, { ...options });
-      return res.data;
-    } catch (err) {
-      const code = err?.response?.status;
-      if (code === 404) {
-        console.warn(`404 on ${url} (treating as end-of-pages)`);
-        return { __END__: true };
-      }
-      console.warn(`Attempt ${attempt} failed for ${url} → ${code || err.code || err.message}`);
-      logAxiosError(err, url);
-
-      const transient =
-        code >= 500 ||
-        ['ETIMEDOUT', 'ECONNRESET', 'EAI_AGAIN', 'ECONNABORTED'].includes(err?.code);
-      if (!transient || attempt === retries) throw err;
-
-      await sleep(baseBackoffMs * attempt);
+      const { customerName, customerEmail, notes, currency } = req.body || {};
+      const q = await prisma.quote.create({
+        data: {
+          shareToken: newToken(),
+          customerName: customerName || null,
+          customerEmail: customerEmail || null,
+          notes: notes || null,
+          currency: currency || 'AUD',
+        },
+      });
+      res.json(q);
+    } catch (e) {
+      console.error('POST /quotes', e);
+      res.status(500).json({ error: 'Failed to create quote' });
     }
-  }
-}
+  });
 
-// ---------- Extra field utilities (robust origin/length/width/size) ----------
-function normalizeKey(s) {
-  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-function getFirstDefined(...vals) {
-  for (const v of vals) {
-    if (v !== undefined && v !== null && String(v).trim() !== '') return v;
-  }
-  return undefined;
-}
-function extractValue(obj) {
-  if (obj == null) return undefined;
-  if (typeof obj === 'string' || typeof obj === 'number') return obj;
-  return getFirstDefined(
-    obj.value?.value,
-    obj.value?.text,
-    obj.value?.toString?.(),
-    obj.value,
-    obj.text,
-    obj.val,
-    obj.displayValue,
-    obj.display,
-    obj.data
-  );
-}
-function getExtraFields(details) {
-  const candidates = [
-    details?.extrafields,
-    details?.extraFields,
-    details?.extrafieldvalues,
-    details?.userfields,
-    details?.userFields,
-  ];
-  for (const c of candidates) {
-    if (Array.isArray(c) && c.length) return c;
-  }
-  return Array.isArray(details?.extrafields) ? details.extrafields : [];
-}
-function findExtraField(extras, aliases) {
-  if (!Array.isArray(extras) || extras.length === 0) return undefined;
-  const want = new Set(aliases.map(normalizeKey));
-  for (const f of extras) {
-    const nameCandidates = [
-      f?.name, f?.label, f?.caption, f?.description,
-      f?.displayname, f?.displayName, f?.fieldname, f?.fieldName, f?.key,
-    ];
-    for (const cand of nameCandidates) {
-      if (!cand) continue;
-      if (want.has(normalizeKey(cand))) return f;
+  // Get a quote (supports ?token= for public access)
+  router.get('/:id', async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const token = (req.query.token || '').toString();
+
+      const q = await prisma.quote.findUnique({ where: { id }, include: { items: true } });
+      if (!q) return res.status(404).json({ error: 'Not found' });
+
+      if (token && token !== q.shareToken) return res.status(403).json({ error: 'Invalid token' });
+      res.json(q);
+    } catch (e) {
+      console.error('GET /quotes/:id', e);
+      res.status(500).json({ error: 'Server error' });
     }
-  }
-  for (const f of extras) {
-    const nameCandidates = [f?.name, f?.label, f?.caption, f?.description, f?.displayname, f?.displayName];
-    const joined = nameCandidates.filter(Boolean).map(String).join(' ').toLowerCase();
-    if (!joined) continue;
-    for (const alias of aliases) {
-      if (joined.includes(alias.toLowerCase())) return f;
-    }
-  }
-  return undefined;
-}
-function parseMeasure(val) {
-  if (val == null) return null;
-  let s = String(val).trim();
-  s = s.replace(/,/g, '.');
-  const m = s.match(/-?\d+(\.\d+)?/);
-  if (!m) return null;
-  const n = parseFloat(m[0]);
-  return Number.isNaN(n) ? null : n;
-}
-// ---------------------------------------------------------------------------
+  });
 
-// ---- EXO fetchers ----
-async function fetchExoProductsList() {
-  let all = [];
-  let page = 1;
-  const pageSizes = [50, 25, 10, 5];
+  // Add or increment an item on a quote
+  router.post('/:id/items', async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { stockCode, qty } = req.body || {};
+      if (!stockCode) return res.status(400).json({ error: 'stockCode required' });
 
-  while (true) {
-    let pageData = null;
-    let usedSize = null;
+      const p = await prisma.product.findUnique({ where: { stockCode } });
+      if (!p) return res.status(404).json({ error: 'Product not found' });
 
-    for (const size of pageSizes) {
-      const url = `${exoBaseUrl}/stockitem?page=${page}&pagesize=${size}`;
-      try {
-        const data = await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
-        if (data?.__END__) { pageData = []; break; }
+      const unitPrice = new Prisma.Decimal(p.price || 0);
+      const quantity = Math.max(1, parseInt(qty || '1', 10));
 
-        const items = Array.isArray(data) ? data :
-                      (Array.isArray(data?.items) ? data.items : null);
+      const existing = await prisma.quoteItem.findFirst({ where: { quoteId: id, stockCode } });
 
-        if (!items) {
-          console.error('Unexpected list shape on page', page, '→',
-            (typeof data === 'string' ? data : JSON.stringify(data)).slice(0, 400));
-          pageData = [];
-        } else {
-          pageData = items;
-          usedSize = size;
-        }
-        break;
-      } catch (e) {
-        if (e?.response?.status === 504) {
-          console.warn(`504 on page ${page} size ${size} → stepping down…`);
-          await sleep(3000);
-          continue;
-        }
-        throw e;
-      }
-    }
-
-    if (!pageData || pageData.length === 0) break;
-    console.log(`Fetched page ${page} (size ${usedSize}) with ${pageData.length} products`);
-    all = all.concat(pageData);
-    page++;
-  }
-  return all;
-}
-
-async function fetchExoProductDetails(id) {
-  const url = `${exoBaseUrl}/stockitem/${id}`;
-  const data = await fetchWithRetry(url, { auth: exoAuth, headers: exoHeaders });
-  if (!data || typeof data !== 'object') {
-    throw new Error(`Unexpected product details for id ${id}: ${
-      (typeof data === 'string' ? data : JSON.stringify(data)).slice(0, 800)
-    }`);
-  }
-  return data;
-}
-
-// ---- Sync logic ----
-async function syncProducts() {
-  try {
-    const list = await fetchExoProductsList();
-    console.log(`Total fetched products: ${list.length}`);
-
-    let savedCount = 0;
-
-    for (const brief of list) {
-      const briefId = brief?.id ?? brief?.stockcode ?? brief?.stockCode ?? brief?.barcode1;
-      if (!briefId) {
-        console.warn('Skipping brief product with no id/stockcode', brief);
-        continue;
-      }
-
-      try {
-        await sleep(100);
-        const details = await fetchExoProductDetails(briefId);
-
-        const extras = getExtraFields(details);
-
-        const originField = findExtraField(extras, ['origin','countryoforigin','country','madein','made']);
-        const origin = String(extractValue(originField) ?? '').trim();
-
-        const lengthField = findExtraField(extras, [
-          'length','lengthcm','length(mm)','length(cm)','length(m)','ruglength','size length'
-        ]);
-        const widthField  = findExtraField(extras, [
-          'width','widthcm','width(mm)','width(cm)','width(m)','rugwidth','size width'
-        ]);
-
-        let length = lengthField ? parseMeasure(extractValue(lengthField)) : null;
-        let width  = widthField  ? parseMeasure(extractValue(widthField )) : null;
-
-        if (length == null) length = parseMeasure(details?.length ?? details?.Length ?? details?.dimensions?.length);
-        if (width  == null) width  = parseMeasure(details?.width  ?? details?.Width  ?? details?.dimensions?.width);
-
-        let size = '';
-        if (length && width) {
-          size = `${length} x ${width}`;
-        } else {
-          const sizeField = findExtraField(extras, ['size','dimensions','size(cm)','overall size','rug size']);
-          const sizeRaw = sizeField ? String(extractValue(sizeField) ?? '') : '';
-          if (sizeRaw) {
-            const nums = sizeRaw.replace(/,/g, '.').match(/-?\d+(\.\d+)?/g);
-            if (nums && nums.length >= 2) {
-              const a = parseFloat(nums[0]);
-              const b = parseFloat(nums[1]);
-              if (length == null && !Number.isNaN(a)) length = a;
-              if (width  == null && !Number.isNaN(b)) width  = b;
-              if (length && width) size = `${length} x ${width}`;
-            } else {
-              size = sizeRaw;
-            }
-          }
-        }
-
-        const sku  = details?.barcode1 || String(details?.id ?? briefId) || '';
-        const webDescField = findExtraField(extras, ['webdescription','web description','online description']);
-        const webdescription = String(extractValue(webDescField) ?? '') || details?.notes || '';
-        const stockCode = String(details?.id ?? briefId);
-
-        const rawPrice = details?.saleprices?.[0]?.price ?? details?.latestcost ?? 0;
-        const price = String(rawPrice);
-
-        const stockLevel = Number(details?.totalinstock ?? 0) || 0;
-        const name = details?.description || 'Untitled';
-
-        await prisma.product.upsert({
-          where: { stockCode },
-          update: { name, description: webdescription, sku, price, origin, length, width, size, stockLevel },
-          create: { stockCode, name, description: webdescription, sku, price, origin, length, width, size, stockLevel },
+      if (existing) {
+        const newQty = existing.qty + quantity;
+        await prisma.quoteItem.update({
+          where: { id: existing.id },
+          data: { qty: newQty, subtotal: unitPrice.mul(newQty) },
         });
-
-        savedCount++;
-        if (savedCount % 50 === 0) console.log(`Synced ${savedCount} products so far...`);
-      } catch (rowErr) {
-        console.error(`Error syncing product ${briefId}:`, rowErr?.message || rowErr);
+      } else {
+        await prisma.quoteItem.create({
+          data: {
+            quoteId: id,
+            productId: p.id,
+            stockCode: p.stockCode,
+            name: p.name || 'Untitled',
+            description: p.description || null,
+            sku: p.sku || null,
+            origin: p.origin || null,
+            length: p.length || null,
+            width: p.width || null,
+            size: p.size || null,
+            price: unitPrice,
+            qty: quantity,
+            subtotal: unitPrice.mul(quantity),
+          },
+        });
       }
+
+      await recalcQuote(id);
+      const withItems = await prisma.quote.findUnique({ where: { id }, include: { items: true } });
+      res.json(withItems);
+    } catch (e) {
+      console.error('POST /quotes/:id/items', e);
+      res.status(500).json({ error: 'Failed to add item' });
     }
+  });
 
-    console.log('Sync complete. Saved products:', savedCount);
-  } catch (err) {
-    console.error('Sync error (fatal):', err?.message || err);
-  }
-}
+  // Update item qty (or delete if qty=0)
+  router.patch('/:id/items/:itemId', async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const itemId = Number(req.params.itemId);
+      const qty = Math.max(0, parseInt((req.body?.qty ?? '0'), 10));
 
-// ---- Diagnostics & API Routes ----
+      const item = await prisma.quoteItem.findUnique({ where: { id: itemId } });
+      if (!item || item.quoteId !== id) return res.status(404).json({ error: 'Item not found' });
 
-// Health
-app.get('/health', async (_req, res) => {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    res.json({ ok: true, api: 'up', db: 'ok' });
-  } catch (e) {
-    res.status(500).json({ ok: false, api: 'up', db: String(e) });
-  }
-});
+      if (qty === 0) {
+        await prisma.quoteItem.delete({ where: { id: itemId } });
+      } else {
+        const newSubtotal = new Prisma.Decimal(item.price).mul(qty);
+        await prisma.quoteItem.update({ where: { id: itemId }, data: { qty, subtotal: newSubtotal } });
+      }
 
-// EXO ping
-app.get('/exo-health', async (_req, res) => {
-  try {
-    const url = `${exoBaseUrl}/stockitem?page=1&pagesize=1`;
-    const r = await axiosClient.get(url, { auth: exoAuth, headers: exoHeaders, timeout: 30000 });
-    const body = Array.isArray(r.data) ? r.data :
-                 (Array.isArray(r.data?.items) ? r.data.items : r.data);
-    res.json({ ok: true, status: r.status, sample: Array.isArray(body) ? body.slice(0, 1) : body });
-  } catch (e) {
-    res.status(500).json({
-      ok: false,
-      err: e?.response?.status ?? e.message,
-      data: e?.response?.data ?? null
-    });
-  }
-});
+      await recalcQuote(id);
+      const withItems = await prisma.quote.findUnique({ where: { id }, include: { items: true } });
+      res.json(withItems);
+    } catch (e) {
+      console.error('PATCH /quotes/:id/items/:itemId', e);
+      res.status(500).json({ error: 'Failed to update item' });
+    }
+  });
 
-// Debug extras
-app.get('/debug/extras/:id', async (req, res) => {
-  try {
-    const details = await fetchExoProductDetails(req.params.id);
-    const extras = getExtraFields(details);
-    const view = (extras || []).map(f => ({
-      keys: {
-        name: f?.name, label: f?.label, caption: f?.caption,
-        description: f?.description, displayname: f?.displayname ?? f?.displayName,
-        fieldname: f?.fieldname ?? f?.fieldName, key: f?.key
-      },
-      rawValue: f?.value,
-      value: extractValue(f)
-    }));
-    res.json({ ok: true, count: view.length, extras: view.slice(0, 100) });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e) });
-  }
-});
+  // Remove item
+  router.delete('/:id/items/:itemId', async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const itemId = Number(req.params.itemId);
+      await prisma.quoteItem.delete({ where: { id: itemId } });
+      await recalcQuote(id);
+      const withItems = await prisma.quote.findUnique({ where: { id }, include: { items: true } });
+      res.json(withItems);
+    } catch (e) {
+      console.error('DELETE /quotes/:id/items/:itemId', e);
+      res.status(500).json({ error: 'Failed to remove item' });
+    }
+  });
 
-// Trigger full sync
-app.get('/sync', async (_req, res) => {
-  await syncProducts();
-  res.send('Product sync triggered');
-});
+  // Update quote header/status
+  router.patch('/:id', async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { customerName, customerEmail, notes, status } = req.body || {};
+      const q = await prisma.quote.update({
+        where: { id },
+        data: {
+          customerName: customerName ?? undefined,
+          customerEmail: customerEmail ?? undefined,
+          notes: notes ?? undefined,
+          status: status ?? undefined,
+        },
+      });
+      res.json(q);
+    } catch (e) {
+      console.error('PATCH /quotes/:id', e);
+      res.status(500).json({ error: 'Failed to update quote' });
+    }
+  });
 
-// --- Products API ---
-// List/search products: GET /products?q=...&take=200
-app.get('/products', async (req, res) => {
-  try {
-    const q = (req.query.q || '').toString().trim();
-    const take = Math.min(parseInt(req.query.take || '500', 10), 1000);
+  // Email the quote (sends a link)
+  router.post('/:id/send', async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { toEmail, toName, message } = req.body || {};
+      const q = await prisma.quote.findUnique({ where: { id }, include: { items: true } });
+      if (!q) return res.status(404).json({ error: 'Not found' });
 
-    const where = q ? {
-      OR: [
-        { stockCode:  { contains: q, mode: 'insensitive' } },
-        { sku:        { contains: q, mode: 'insensitive' } },
-        { name:       { contains: q, mode: 'insensitive' } },
-        { description:{ contains: q, mode: 'insensitive' } },
-      ],
-    } : {};
+      const recipient = toEmail || q.customerEmail;
+      if (!recipient) return res.status(400).json({ error: 'Recipient email required' });
 
-    const products = await prisma.product.findMany({
-      where,
-      orderBy: { createdAt: 'desc' }, // change to updatedAt if desired
-      take,
-    });
-    res.json(products);
-  } catch (err) {
-    console.error('Failed to fetch products:', err?.message || err);
-    res.status(500).json({ error: 'Failed to fetch products' });
-  }
-});
+      if (!transporter) return res.status(500).json({ error: 'SMTP not configured' });
 
-// Single product by stockCode (for product page)
-app.get('/products/:stockCode', async (req, res) => {
-  try {
-    const product = await prisma.product.findUnique({
-      where: { stockCode: req.params.stockCode },
-    });
-    if (!product) return res.status(404).json({ error: 'Not found' });
-    res.json(product);
-  } catch (e) {
-    console.error('GET /products/:stockCode', e);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+      const link = publicLink(q);
+      const html = `
+        <div style="font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+          <h2>Quote #${q.id}</h2>
+          ${q.customerName ? `<p>Hi ${q.customerName},</p>` : ''}
+          ${message ? `<p>${message}</p>` : ''}
+          <p>Please view your quote here:</p>
+          <p><a href="${link}">${link}</a></p>
+          <hr/>
+          <p><strong>Summary</strong></p>
+          <ul>${q.items.map(it => `<li>${it.qty} × ${it.name} — $${it.price} each</li>`).join('')}</ul>
+          <p>Subtotal: $${q.subtotal}</p>
+          ${Number(taxRate) ? `<p>Tax: $${q.tax}</p>` : ''}
+          <p><strong>Total: $${q.total}</strong></p>
+        </div>
+      `;
 
-// Serve product page at /product?stockCode=ABC
-app.get('/product', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'product.html'));
-});
+      await transporter.sendMail({ from: MAIL_FROM, to: recipient, subject: `Your Quote #${q.id}`, html });
+      await prisma.quote.update({ where: { id }, data: { status: 'SENT' } });
 
-// ---- Cron (hourly) ----
-cron.schedule('0 * * * *', () => {
-  console.log('Cron: starting hourly sync...');
-  syncProducts();
-});
+      res.json({ ok: true, sentTo: recipient, link });
+    } catch (e) {
+      console.error('POST /quotes/:id/send', e);
+      res.status(500).json({ error: 'Failed to send quote' });
+    }
+  });
 
-// ---- Shutdown ----
-const shutdown = async () => {
-  console.log('Shutting down gracefully...');
-  try {
-    await prisma.$disconnect();
-  } finally {
-    process.exit(0);
-  }
+  return router;
 };
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
-
-// ---- Start ----
-app.listen(port, '0.0.0.0', () => console.log(`App listening on port ${port}`));
