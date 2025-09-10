@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Quote</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 md:p-8">
+  <div class="mx-auto w-full max-w-5xl bg-white rounded-xl shadow">
+    <div class="p-6 border-b flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-semibold">Quote <span id="q-id" class="text-gray-500"></span></h1>
+        <p class="text-sm text-gray-500" id="q-status"></p>
+      </div>
+      <div class="text-right">
+        <a href="/" class="text-indigo-600 hover:underline">← Back to list</a>
+      </div>
+    </div>
+
+    <div id="status" class="px-6 py-3 text-sm"></div>
+
+    <div class="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div class="md:col-span-2">
+        <table class="w-full">
+          <thead class="text-left bg-gray-50">
+            <tr>
+              <th class="p-3">Item</th>
+              <th class="p-3 w-20">Qty</th>
+              <th class="p-3 w-28">Price</th>
+              <th class="p-3 w-28">Subtotal</th>
+              <th class="p-3 w-12"></th>
+            </tr>
+          </thead>
+          <tbody id="items" class="divide-y"></tbody>
+        </table>
+        <div id="empty" class="hidden p-6 text-center text-gray-500">No items yet. Add products from the list or product page.</div>
+      </div>
+
+      <div class="md:col-span-1">
+        <div class="border rounded-lg p-4">
+          <h3 class="font-semibold mb-3">Customer</h3>
+          <label class="block text-sm text-gray-600 mb-1">Name</label>
+          <input id="customerName" class="w-full mb-3 border rounded px-3 py-2" placeholder="Optional"/>
+          <label class="block text-sm text-gray-600 mb-1">Email</label>
+          <input id="customerEmail" type="email" class="w-full mb-3 border rounded px-3 py-2" placeholder="name@example.com"/>
+          <label class="block text-sm text-gray-600 mb-1">Notes</label>
+          <textarea id="notes" class="w-full mb-3 border rounded px-3 py-2" rows="3" placeholder="Optional note for the client"></textarea>
+
+          <div class="border-t mt-3 pt-3 text-sm">
+            <div class="flex justify-between"><span>Subtotal</span><span id="subtotal">$0.00</span></div>
+            <div class="flex justify-between"><span>Tax</span><span id="tax">$0.00</span></div>
+            <div class="flex justify-between font-semibold"><span>Total</span><span id="total">$0.00</span></div>
+          </div>
+
+          <button id="btn-save" class="mt-4 w-full bg-gray-700 text-white py-2 rounded hover:bg-gray-800">Save</button>
+          <button id="btn-send" class="mt-2 w-full bg-emerald-600 text-white py-2 rounded hover:bg-emerald-700">Email Quote</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const quoteId = Number(params.get('id'));
+  const token = params.get('token') || '';
+  const $ = (id) => document.getElementById(id);
+
+  function money(v) {
+    const n = Number(v || 0);
+    return n.toLocaleString(undefined, { style: 'currency', currency: 'AUD' });
+  }
+  function setStatus(msg, cls='text-gray-600') {
+    $('status').textContent = msg || '';
+    $('status').className = 'px-6 py-3 text-sm ' + cls;
+  }
+
+  async function load() {
+    if (!quoteId) { setStatus('Missing ?id', 'text-red-600'); return; }
+    const url = `/quotes/${quoteId}` + (token ? `?token=${encodeURIComponent(token)}` : '');
+    const r = await fetch(url);
+    if (!r.ok) { setStatus('Failed to load quote', 'text-red-600'); return; }
+    const q = await r.json();
+    render(q);
+  }
+
+  function render(q) {
+    $('q-id').textContent = `#${q.id}`;
+    $('q-status').textContent = `Status: ${q.status}`;
+    $('customerName').value = q.customerName || '';
+    $('customerEmail').value = q.customerEmail || '';
+    $('notes').value = q.notes || '';
+    $('subtotal').textContent = money(q.subtotal);
+    $('tax').textContent = money(q.tax);
+    $('total').textContent = money(q.total);
+
+    const tbody = $('items');
+    tbody.innerHTML = '';
+    const empty = $('empty');
+    empty.classList.toggle('hidden', (q.items || []).length > 0);
+
+    (q.items || []).forEach(it => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="p-3">
+          <div class="font-medium">${it.name}</div>
+          <div class="text-xs text-gray-500">StockCode: ${it.stockCode}${it.sku ? ' • SKU: ' + it.sku : ''}</div>
+        </td>
+        <td class="p-3">
+          ${token ? `<span>${it.qty}</span>` : `
+            <input type="number" min="0" value="${it.qty}" class="w-20 border rounded px-2 py-1"
+              data-role="qty" data-id="${it.id}" />
+          `}
+        </td>
+        <td class="p-3">${money(it.price)}</td>
+        <td class="p-3">${money(it.subtotal)}</td>
+        <td class="p-3 text-right">
+          ${token ? '' : `<button class="text-rose-600 hover:underline" data-role="remove" data-id="${it.id}">Remove</button>`}
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    if (!token) {
+      tbody.querySelectorAll('[data-role="qty"]').forEach(inp => {
+        inp.addEventListener('change', async (e) => {
+          const itemId = e.target.getAttribute('data-id');
+          const qty = Math.max(0, parseInt(e.target.value || '0', 10));
+          setStatus('Updating…');
+          const r = await fetch(`/quotes/${quoteId}/items/${itemId}`, {
+            method: 'PATCH',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ qty })
+          });
+          if (!r.ok) return setStatus('Update failed', 'text-red-600');
+          const q2 = await r.json();
+          render(q2);
+          setStatus('Updated', 'text-green-600');
+        });
+      });
+
+      tbody.querySelectorAll('[data-role="remove"]').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const itemId = e.target.getAttribute('data-id');
+          setStatus('Removing…');
+          const r = await fetch(`/quotes/${quoteId}/items/${itemId}`, { method: 'DELETE' });
+          if (!r.ok) return setStatus('Remove failed', 'text-red-600');
+          const q2 = await r.json();
+          render(q2);
+          setStatus('Removed', 'text-green-600');
+        });
+      });
+    } else {
+      // Public view: hide form controls
+      $('btn-save').style.display = 'none';
+      $('btn-send').style.display = 'none';
+      $('customerName').disabled = true;
+      $('customerEmail').disabled = true;
+      $('notes').disabled = true;
+    }
+  }
+
+  $('btn-save').addEventListener('click', async () => {
+    const payload = {
+      customerName: $('customerName').value,
+      customerEmail: $('customerEmail').value,
+      notes: $('notes').value
+    };
+    setStatus('Saving…');
+    const r = await fetch(`/quotes/${quoteId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (!r.ok) return setStatus('Save failed', 'text-red-600');
+    setStatus('Saved', 'text-green-600');
+    load();
+  });
+
+  $('btn-send').addEventListener('click', async () => {
+    const email = $('customerEmail').value.trim();
+    if (!email) { setStatus('Customer email required', 'text-red-600'); return; }
+    setStatus('Sending…');
+    const r = await fetch(`/quotes/${quoteId}/send`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        toEmail: email,
+        toName: $('customerName').value || undefined,
+        message: $('notes').value || undefined
+      })
+    });
+    if (!r.ok) return setStatus('Send failed', 'text-red-600');
+    const j = await r.json();
+    setStatus(`Sent to ${j.sentTo}`, 'text-green-600');
+    load();
+  });
+
+  load();
+</script>
+</body>
+</html>
