@@ -26,3 +26,55 @@ model Product {
   @@index([sku])
   @@index([name])
 }
+// --- keep your existing generator + datasource + Product model ---
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+model Quote {
+  id           Int          @id @default(autoincrement())
+  shareToken   String       @unique
+  status       QuoteStatus  @default(DRAFT)
+  customerName String?
+  customerEmail String?
+  notes        String?
+  currency     String       @default("AUD")
+
+  subtotal     Decimal      @db.Decimal(12, 2) @default(0)
+  tax          Decimal      @db.Decimal(12, 2) @default(0)
+  total        Decimal      @db.Decimal(12, 2) @default(0)
+
+  items        QuoteItem[]
+
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model QuoteItem {
+  id           Int       @id @default(autoincrement())
+  quoteId      Int
+  productId    Int?
+  stockCode    String
+  name         String
+  description  String?
+  sku          String?
+  origin       String?
+  length       Float?
+  width        Float?
+  size         String?
+
+  price        Decimal    @db.Decimal(12, 2) // unit price snapshot
+  qty          Int        @default(1)
+  subtotal     Decimal    @db.Decimal(12, 2)
+
+  Quote        Quote      @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  Product      Product?   @relation(fields: [productId], references: [id])
+
+  @@index([quoteId])
+  @@index([stockCode])
+}
